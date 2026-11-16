@@ -66,6 +66,16 @@
 [data-skin="classic"] .hero-num{font-weight:700;font-size:clamp(32px,4.6vw,46px)}
 [data-skin="classic"] th{background:#f0f2f6;color:#5b6472;letter-spacing:.4px}
 [data-skin="classic"] .sec-h h2{font:700 16px/1.3 var(--sans)}
+.x5-badge{display:inline-block;color:#fff;font-size:11px;font-weight:600;padding:2px 9px;border-radius:9px;white-space:nowrap}
+.x5h-h{margin:22px 0 10px;font:600 15px/1.3 var(--sans)}
+.x5h-k{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:10px}
+.x5h-k .k{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:0}
+.x5h-k .kl{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+.x5h-k .kv{font-size:20px;font-weight:650;margin-top:2px}
+.x5h-k .kv.pos{color:var(--good)}.x5h-k .kv.neg{color:var(--bad)}.x5h-k .kv.warn{color:var(--warn)}
+.x5h-k .ks{font-size:11px;color:var(--muted);margin-top:2px}
+@media (max-width:900px){.x5h-k{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.x5-more{margin-top:24px}.x5-more>summary{cursor:pointer;font-weight:600;padding:8px 0}
 .x5kp{display:none}
 [data-skin="classic"] .x5kp{display:block;background:var(--bg)}
 .x5kp .wrap{padding-block:12px 4px}
@@ -243,7 +253,7 @@
     const lv = L.state === 'ok' ? h.sgn(liveMarks().total, v => h.money(v)) : L.state === 'running' ? L.done + '/' + L.n : L.state === 'blocked' ? 'Off' : '—';
     return st('1 · Audit on open', count(chk, 'fail') + ' fail · ' + count(chk, 'warn') + ' warn', count(chk, 'pass') + ' checks passed · ran ' + hhmm(T.openedAt) + ' IST')
       + st('2 · Live NSE check', lv, L.state === 'ok' ? Object.keys(L.q).length + ' stocks + ' + Object.keys(L.idx).length + ' indices at ' + hhmm(L.at) + ' IST' : 'listed equity, MTF and option underlyings')
-      + st('3 · Asset health', Math.round(R().health.score) + '/100', R().health.rows.filter(r => r.status === 'attention').length + ' holdings need attention')
+      + (() => { const hr = healthRows('all'), L = [].concat(hr.mf, hr.eq, hr.etf, hr.oth); return st('3 · Asset health', L.filter(x => x.st === 'stale').length + ' stale · ' + L.filter(x => x.st === 'watch').length + ' watch', L.filter(x => x.st === 'current').length + ' current · funds, stocks, ETFs, other'); })()
       + st('4 · Last full update', (bd === 0 ? 'Today' : bd + ' bd ago'), istStamp(m.builtAt) + ' · prices ' + h.fmtD(lin[0] && lin[0].asOf) + ' · NAV ' + h.fmtD(lin[1] && lin[1].asOf));
   }
   function liveSection() {
@@ -283,6 +293,65 @@
     return o;
   }
   function initUpdateTab() { try { H().initUpdate(); } catch (e) { } const b = document.getElementById('twRunBtn'); if (b) b.textContent = '↻ Run full update'; }
+
+  // ---------- Asset Health in the V2 layout: one row per fund / stock / ETF, Current · Watch · Stale
+  // Status is recomputed when the page opens, against today's expected NSE session (not the build date),
+  // so an old build shows its rows going stale instead of looking current.
+  const NSE_CLOSED = new Set(['2026-10-20', '2026-11-10', '2026-11-24', '2026-12-25']);
+  const isSession = d => { const w = d.getUTCDay(); return w !== 0 && w !== 6 && !NSE_CLOSED.has(d.toISOString().slice(0, 10)); };
+  const istNow = () => { const n = new Date(Date.now() + 5.5 * 36e5); return { d: n.toISOString().slice(0, 10), mins: n.getUTCHours() * 60 + n.getUTCMinutes() }; };
+  const prevSession = iso => { const d = new Date(iso + 'T00:00:00Z'); do { d.setUTCDate(d.getUTCDate() - 1); } while (!isSession(d)); return d.toISOString().slice(0, 10); };
+  const sessionsBetween = (a, b) => { if (!a || !b || a >= b) return 0; let n = 0; const d = new Date(a + 'T00:00:00Z'); while (true) { d.setUTCDate(d.getUTCDate() + 1); const s = d.toISOString().slice(0, 10); if (s > b) break; if (isSession(d)) n++; } return n; };
+  function expected() {
+    const t = istNow(), today = new Date(t.d + 'T00:00:00Z'), todayIs = isSession(today);
+    const px = todayIs && t.mins >= 555 ? t.d : (todayIs ? prevSession(t.d) : prevSession(t.d));   // price: today's session once open (09:15)
+    const navBase = todayIs && t.mins >= 1380 ? t.d : prevSession(t.d);                              // NAV for D lands ~23:00 IST
+    const bm = M().lineage && M().lineage[0] && M().lineage[0].asOf;                                  // never expect less than the build already had
+    return { px: bm && bm > px ? bm : px, nav: navBase };
+  }
+  const stat = bd => bd == null ? 'stale' : bd <= 0 ? 'current' : bd === 1 ? 'watch' : 'stale';
+  const STAT = { current: ['Current', 'var(--good)'], watch: ['Watch', 'var(--warn)'], stale: ['Stale', 'var(--bad)'] };
+  const badge = (st, why) => '<span class="x5-badge" style="background:' + STAT[st][1] + '" title="' + (why || STAT[st][0]) + '">' + STAT[st][0] + '</span>';
+  function healthRows(mem) {
+    const m = M(), ex = expected(), inM = h => mem === 'all' || h.member === mem;
+    const group = (list, keyOf) => { const g = {}; list.forEach(h => { const k = keyOf(h); (g[k] = g[k] || { rows: [] }).rows.push(h); }); return Object.values(g).map(x => { const r0 = x.rows[0]; const dates = x.rows.map(r => r.asOf).filter(Boolean).sort(); return { h: r0, holders: Array.from(new Set(x.rows.map(r => r.member))), value: x.rows.reduce((a, r) => a + r.value, 0), asOf: dates[0] || null }; }); };
+    const mf = group(m.holdings.filter(h => h.cls === 'Mutual Fund' && inM(h)), h => h.isin || h.name).map(g => { const fof = /FoF|Fund of Fund|International|Nasdaq|Global|Overseas|US /i.test(g.h.fullName || g.h.name); let bd = g.asOf ? sessionsBetween(g.asOf, ex.nav) : null; const st = bd != null && fof && bd === 1 ? 'watch' : stat(bd); return Object.assign(g, { bd, st, fof }); });
+    const eq = group(m.holdings.filter(h => h.cls === 'Equity' && h.sym && inM(h)), h => base(h.sym)).map(g => { const bd = g.asOf ? sessionsBetween(g.asOf, ex.px) : null; return Object.assign(g, { bd, st: stat(bd), live: T.live.q[base(g.h.sym)] }); });
+    const etf = group(m.holdings.filter(h => h.cls === 'ETF' && inM(h)), h => h.isin || h.name).map(g => { const bd = g.asOf ? sessionsBetween(g.asOf, ex.px) : null; return Object.assign(g, { bd, st: stat(bd) }); });
+    const LIM = { Bond: [7, 'SGB price, weekly'], Unlisted: [120, 'latest round / board value'], 'Fixed Deposit': [2, 'accrued daily'], 'Cash & Receivables': [10, 'ledger / bank statement'], Retirement: [60, 'NPS / EPF statement, monthly'], 'Real Estate': [365, 'valuation, yearly'] };
+    const oth = m.holdings.filter(h => LIM[h.cls] && inM(h)).map(h => { const age = h.asOf ? E().dayDiff(h.asOf, m.today) + Math.max(0, E().dayDiff(m.today, istNow().d)) : null; const [lim, cad] = LIM[h.cls]; const st = age == null ? 'stale' : age <= lim * 0.6 ? 'current' : age <= lim ? 'watch' : 'stale'; return { h, holders: [h.member], value: h.value, asOf: h.asOf, age, st, cad, lim }; });
+    const by = (a, b) => ({ stale: 0, watch: 1, current: 2 }[a.st] - { stale: 0, watch: 1, current: 2 }[b.st]) || b.value - a.value;
+    return { ex, mf: mf.sort(by), eq: eq.sort(by), etf: etf.sort(by), oth: oth.sort(by) };
+  }
+  function staleCount(mem) { const r = healthRows(mem || 'all'); return [].concat(r.mf, r.eq, r.etf, r.oth).filter(x => x.st === 'stale').length; }
+  function tabHealth(origTab) {
+    const h = H(), m = M(), mem = A().S.member, R_ = healthRows(mem), hold = ks => ks.map(k => h.mname(k)).join(', ');
+    const sumV = L => L.reduce((a, x) => a + x.value, 0);
+    const strip = (label, L, book, unit) => { const st = L.filter(x => x.st === 'stale'), wt = L.filter(x => x.st === 'watch'), cu = L.filter(x => x.st === 'current'); const worst = L.reduce((a, x) => Math.max(a, x.bd == null ? 999 : x.bd), 0); const sv = sumV(st);
+      return '<div class="x5h-k">' + [['Stale ' + unit, st.length, '≥2 business days behind', st.length ? 'neg' : 'pos'], ['Watch', wt.length, '1 business day behind', wt.length ? 'warn' : 'pos'], ['Current', cu.length, 'on latest expected date', 'pos'], ['Value on stale ' + unit, h.money(sv), (book ? (sv / book * 100).toFixed(1) : '0') + '% of ' + label, sv ? 'neg' : 'pos'], ['Stalest', worst === 999 ? 'undated' : worst + ' bd', 'as of ' + h.fmtD(istNow().d), '']].map(([l, v, s, c]) => '<div class="k"><div class="kl">' + l + '</div><div class="kv ' + c + '">' + v + '</div><div class="ks">' + s + '</div></div>').join('') + '</div>'; };
+    let o = '<div class="sec-h"><h2>Asset Health <span class="x5-tag">NAV &amp; price freshness, checked when this page opened (' + hhmm(T.openedAt) + ' IST)</span></h2></div>';
+    o += '<p class="note" style="margin:0 0 6px">Expected dates now: stock prices <b>' + h.fmtD(R_.ex.px) + '</b> · fund NAVs <b>' + h.fmtD(R_.ex.nav) + '</b>. Current = on the expected date · Watch = 1 business day behind (normal for fund-of-funds before ~11:00 IST) · Stale = 2 or more.</p>';
+    // Mutual funds
+    o += '<h4 class="x5h-h">Mutual Fund NAVs</h4>' + strip('MF book', R_.mf, sumV(R_.mf), 'NAVs');
+    o += '<div class="tw"><table><thead><tr><th>Fund</th><th>Holders</th><th class="r">NAV</th><th class="r">NAV Date</th><th class="r">Behind (bd)</th><th>Status</th><th class="r">Family Value</th></tr></thead><tbody>' + R_.mf.map(x => '<tr><td>' + h.esc(x.h.fullName || x.h.name) + (x.h.plan && x.h.plan !== 'Direct' ? ' <span class="x5-tag">Regular</span>' : '') + (x.fof ? ' <span class="x5-tag">FoF</span>' : '') + '</td><td>' + hold(x.holders) + '</td><td class="r">' + (x.h.price != null ? x.h.price : '—') + '</td><td class="r nw">' + h.fmtD(x.asOf) + '</td><td class="r">' + (x.bd == null ? '—' : x.bd) + '</td><td>' + badge(x.st) + '</td><td class="r">' + h.money(x.value, 1) + '</td></tr>').join('') + '</tbody></table></div>';
+    o += '<p class="note">NAVs come from AMFI in the full update (nav_amfi.py auto). A Stale fund should be checked against AMFI before relying on its value.</p>';
+    // Stocks
+    o += '<h4 class="x5h-h">Direct Equity — Stock LTPs</h4>' + strip('equity book', R_.eq, sumV(R_.eq), 'LTPs');
+    const liveOn = T.live.state === 'ok';
+    o += '<div class="tw"><table><thead><tr><th>Symbol</th><th>Company</th><th>Holders</th><th class="r">LTP</th><th class="r">LTP Date</th><th class="r">Behind (bd)</th><th>Status</th>' + (liveOn ? '<th class="r">Live NSE</th>' : '') + '<th class="r">Family Value</th></tr></thead><tbody>' + R_.eq.map(x => { const lv = x.live; return '<tr><td><b>' + h.esc(x.h.sym) + '</b></td><td>' + h.esc(x.h.name) + '</td><td>' + hold(x.holders) + '</td><td class="r">' + h.money(x.h.price, 1) + '</td><td class="r nw">' + h.fmtD(x.asOf) + '</td><td class="r">' + (x.bd == null ? '—' : x.bd) + '</td><td>' + badge(x.st) + '</td>' + (liveOn ? '<td class="r">' + (lv ? lv.ltp.toLocaleString('en-IN') + '<small>' + h.esc((lv.ts || '').slice(0, 16)) + '</small>' : '<span class="note">no quote</span>') + '</td>' : '') + '<td class="r">' + h.money(x.value, 1) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    o += '<p class="note">' + (liveOn ? 'Live NSE column: last traded price checked when this page opened (display only; the booked LTP changes with the full update).' : 'Turn on live NSE prices from the bar above to see a live column here.') + ' TRUSTPLUTUS (unlisted) is never priced and is listed under Other assets.</p>';
+    // ETFs
+    if (R_.etf.length) {
+      o += '<h4 class="x5h-h">Demat ETFs</h4>' + strip('ETF book', R_.etf, sumV(R_.etf), 'prices');
+      o += '<div class="tw"><table><thead><tr><th>ETF</th><th>ISIN</th><th>Holders</th><th class="r">Price</th><th class="r">Price Date</th><th class="r">Behind (bd)</th><th>Status</th><th class="r">Family Value</th></tr></thead><tbody>' + R_.etf.map(x => '<tr><td>' + h.esc(x.h.name) + '</td><td class="mono">' + h.esc(x.h.isin || '') + '</td><td>' + hold(x.holders) + '</td><td class="r">' + (x.h.price != null ? x.h.price : '—') + '</td><td class="r nw">' + (x.asOf ? h.fmtD(x.asOf) : 'no date') + '</td><td class="r">' + (x.bd == null ? '—' : x.bd) + '</td><td>' + badge(x.st, x.asOf ? '' : 'No price date on record') + '</td><td class="r">' + h.money(x.value, 1) + '</td></tr>').join('') + '</tbody></table></div>';
+      o += '<p class="note">These rows carry an ISIN but no NSE symbol, so the daily price step does not reprice them. Fix: add the NSE symbol to each ETF row in dash_data.json.</p>';
+    }
+    // Other assets
+    o += '<h4 class="x5h-h">Other assets</h4><div class="tw"><table><thead><tr><th>Asset</th><th>Holder</th><th>Updated by</th><th class="r">As of</th><th class="r">Age (days)</th><th>Status</th><th class="r">Value</th></tr></thead><tbody>' + R_.oth.map(x => '<tr><td>' + h.esc(x.h.name) + '<small>' + h.esc(x.h.cls) + '</small></td><td>' + hold(x.holders) + '</td><td class="note">' + h.esc(x.cad) + '</td><td class="r nw">' + (x.asOf ? h.fmtD(x.asOf) : 'no date') + '</td><td class="r">' + (x.age == null ? '—' : x.age) + '</td><td>' + badge(x.st, 'Limit ' + x.lim + ' days') + '</td><td class="r">' + h.money(x.value, 1) + '</td></tr>').join('') + '</tbody></table></div>';
+    o += '<p class="note">Other assets are judged in calendar days against how often their statement arrives: Current within 60% of that interval, Watch up to 100%, Stale beyond it.</p>';
+    if (typeof origTab === 'function') o += '<details class="x5-more"><summary>Holding health scores (freshness, source, leverage, size, cost)</summary>' + origTab() + '</details>';
+    return o;
+  }
 
   // ---------- Behavioural tab (live version of the Behavioral Ledger)
   function tabBehaviour() {
@@ -399,5 +468,5 @@
     else if (st === 'unavailable') { T.mcp = null; paint(); }
     else paint();
   }
-  window.TW5 = { boot, tabUpdate, initUpdateTab, tabBehaviour, tabHistory, initHistory, tabExport, paint, get live() { return T.live; }, _underlying: underlying };
+  window.TW5 = { tabHealth, staleCount, boot, tabUpdate, initUpdateTab, tabBehaviour, tabHistory, initHistory, tabExport, paint, get live() { return T.live; }, _underlying: underlying };
 })();
