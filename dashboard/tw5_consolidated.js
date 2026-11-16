@@ -44,7 +44,54 @@
 .x5-bias{display:grid;gap:12px}
 .x5-ev{font-family:ui-monospace,'SF Mono',Consolas,monospace;font-size:12.5px;background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:8px 0;overflow-wrap:anywhere}
 .x5-tag{font-size:11px;color:var(--muted)}
+/* Classic view: the look of the earlier V2 page (light, blue button tabs, KPI strip). Wins over both dark blocks. */
+:root:root[data-skin="classic"]{--bg:#f6f7f9;--surface:#fff;--surface2:#f4f6fb;--ink:#1a2233;--muted:#6b7280;--line:#e5e8ee;--band:#f6f7f9;--band-ink:#1a2233;--band-muted:#5b6472;--accent:#0f4bd8;--accent-soft:#eef3ff;--focus:#0f4bd8;--good:#0b8a4b;--good-soft:#dcf5e6;--bad:#cc3344;--bad-soft:#fde3e3;--warn:#b45309;--warn-soft:#fef3d7;--info:#0f4bd8;--info-soft:#e8efff;--crit:#cc3344;--crit-soft:#fde3e3;--c1:#0e9f6e;--c2:#7c5cff;--c3:#e05252;--c4:#1a4fa0;--c5:#d99a00;--c6:#8a93a3;--c7:#b4539a;--shadow:none;--hero:#fff;--hero-2:#fff;--hero-ink:#1a2233;--hero-muted:#6b7280;--hero-line:#0f4bd8;--hero-fill:rgba(15,75,216,.08);--hero-rule:#e5e8ee;--hero-pos:#0b8a4b;--hero-neg:#cc3344;--serif:-apple-system,'Segoe UI',Roboto,sans-serif;--sans:-apple-system,'Segoe UI',Roboto,sans-serif;color-scheme:light}
+[data-skin="classic"] .mast{border-bottom:2px solid var(--line)}
+[data-skin="classic"] .brand h1{font:700 20px/1.2 var(--sans)}
+[data-skin="classic"] .chip{border:1px solid #d7dbe3;background:#fff;color:#1a2233;border-radius:8px;padding:7px 14px;box-shadow:0 1px 2px rgba(16,24,40,.05)}
+[data-skin="classic"] .chip[aria-pressed="true"]{background:#fbfcff;border-color:#0f4bd8;box-shadow:inset 0 0 0 1px #0f4bd8;color:#1a2233}
+[data-skin="classic"] #upd-go{background:#fff;color:#0f4bd8;border-color:#0f4bd8}
+[data-skin="classic"] .icon-btn{border:1px solid #d7dbe3;background:#fff;color:#374151}
+[data-skin="classic"] .icon-btn[aria-pressed="true"]{background:#1a2233;color:#fff}
+[data-skin="classic"] #theme{display:none}
+[data-skin="classic"] .tabs{gap:8px;padding-block:8px 10px;border-top:1px solid #eceef2}
+[data-skin="classic"] .tab{border:1px solid #d7dbe3;border-radius:8px;background:#fff;color:#3a4354;padding:8px 14px;font:600 13px/1 var(--sans);box-shadow:0 1px 2px rgba(16,24,40,.05)}
+[data-skin="classic"] .tab:hover{border-color:#0f4bd8;color:#3a4354}
+[data-skin="classic"] .tab[aria-selected="true"]{background:#0f4bd8;color:#fff;border-color:#0f4bd8}
+[data-skin="classic"] .tab .n{background:#e05252;color:#fff}
+[data-skin="classic"] .card{border-radius:10px;box-shadow:none}
+[data-skin="classic"] .kpi .l{font-size:11px;letter-spacing:.5px}
+[data-skin="classic"] .kpi .v{font:650 20px/1.2 var(--sans)}
+[data-skin="classic"] .hero{border:1px solid var(--line);box-shadow:none}
+[data-skin="classic"] .hero-num{font-weight:700;font-size:clamp(32px,4.6vw,46px)}
+[data-skin="classic"] th{background:#f0f2f6;color:#5b6472;letter-spacing:.4px}
+[data-skin="classic"] .sec-h h2{font:700 16px/1.3 var(--sans)}
+.x5kp{display:none}
+[data-skin="classic"] .x5kp{display:block;background:var(--bg)}
+.x5kp .wrap{padding-block:12px 4px}
+.x5kp .row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:900px){.x5kp .row{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.x5kp .k{background:#fff;border:1px solid #e5e8ee;border-radius:10px;padding:12px 16px;min-width:0}
+.x5kp .kl{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#6b7280}
+.x5kp .kv{font-size:20px;font-weight:650;margin-top:2px;color:#1a2233}
+.x5kp .kv.neg{color:#cc3344}.x5kp .kv.pos{color:#0b8a4b}
+.x5kp .ks{font-size:11px;color:#6b7280;margin-top:2px}
+.x5kp .tie{font-size:12px;color:#6b7280;margin:10px 0 0;overflow-wrap:anywhere}
 `;
+  const SKIN_KEY = 'tw5.skin';
+  const getSkin = () => { try { return localStorage.getItem(SKIN_KEY) || 'classic'; } catch (e) { return 'classic'; } };
+  const setSkin = v => { document.documentElement.setAttribute('data-skin', v); try { localStorage.setItem(SKIN_KEY, v); } catch (e) { } };
+  document.documentElement.setAttribute('data-skin', getSkin());
+  // V2-style headline strip; same definitions as both "How the figures tie" lines
+  function kpiStrip() {
+    const m = M(), h = H(), t = m.totals, sumC = c => m.holdings.filter(x => x.cls === c).reduce((a, x) => a + x.value, 0);
+    const cash = sumC('Cash & Receivables'), fd = sumC('Fixed Deposit'), re = sumC('Real Estate'), exP = t.netTracked + cash + fd, gnw = exP + re;
+    const mtfM = Object.keys(m.mtfByMember || {}).filter(k => (m.mtfByMember[k] || 0) > 0).map(k => h.mname(k));
+    const k = (l, v, sub, cls) => '<div class="k"><div class="kl">' + l + '</div><div class="kv ' + (cls || '') + '">' + v + '</div>' + (sub ? '<div class="ks">' + sub + '</div>' : '') + '</div>';
+    const full = v => h.money(v, 1);
+    return '<div class="wrap"><div class="row">' + k('Gross Assets', h.money(t.grossTracked)) + k('Manual Entry Assets', h.money(t.manual), 'cash, FD, property — not in Gross Assets') + k('MTF Loans', h.money(t.mtf), mtfM.length + ' members (' + h.esc(mtfM.join(', ')) + ')', 'neg') + k('Bank Debt', h.money(t.bankDebt), 'OD, auto loan, cards · bureau', 'neg') + k('Tracked Net Worth', h.money(t.netTracked), 'gross − MTF − bank debt') + k('Net Worth excl. Property', h.money(exP), 'tracked + cash &amp; receivables + FD', 'pos') + k('Gross Net Worth', h.money(gnw), 'incl. real estate ' + h.money(re)) + k('Retirement (NPS+EPF)', h.money(t.retire), 'illiquid — Rishi') + '</div>'
+      + '<p class="tie">How the figures tie: tracked net ' + full(t.netTracked) + ' + cash &amp; receivables ' + full(cash) + ' + FD ' + full(fd) + ' = net worth excl. property ' + full(exP) + ' · + real estate ' + full(re) + ' = gross net worth ' + full(gnw) + '</p></div>';
+  }
   function injectCss() { if (document.getElementById('x5-css')) return; const s = document.createElement('style'); s.id = 'x5-css'; s.textContent = CSS; document.head.appendChild(s); }
 
   // ---------- live NSE prices (overlay; never written into MODEL)
@@ -183,6 +230,8 @@
   }
   function paint() {
     const b = document.getElementById('x5-bar'); if (b) b.innerHTML = bar();
+    const kp = document.getElementById('x5-kpis'); if (kp) kp.innerHTML = kpiStrip();
+    const sb = document.getElementById('x5-skin'); if (sb) { const cl = getSkin() === 'classic'; sb.textContent = cl ? 'Modern view' : 'Classic view'; sb.title = cl ? 'Switch to the navy V4 layout' : 'Switch to the earlier V2 layout'; }
     if (A().S.tab === 'update') { const el = document.getElementById('x5-live'); if (el) el.innerHTML = liveSection(); const au = document.getElementById('x5-aud'); if (au) au.innerHTML = auditSection(); const st = document.getElementById('x5-steps'); if (st) st.innerHTML = steps(); }
   }
 
@@ -319,6 +368,7 @@
 
   // ---------- events + boot
   document.addEventListener('click', ev => {
+    if (ev.target.closest('#x5-skin')) { setSkin(getSkin() === 'classic' ? 'modern' : 'classic'); paint(); if (window.TWAPP) window.TWAPP.render(); return; }
     const t = ev.target.closest('[data-x5],[data-x5aud],[data-x5dl],[data-x5cp]'); if (!t || !window.TWAPP) return;
     const k = t.dataset.x5;
     if (k === 'goupd') return A().go('update');
@@ -334,6 +384,9 @@
     injectCss();
     const view = document.getElementById('view');
     if (view && !document.getElementById('x5-bar')) { const b = document.createElement('div'); b.id = 'x5-bar'; b.className = 'x5bar'; const mast = document.querySelector('header.mast'); (mast && mast.parentNode ? mast.parentNode.insertBefore(b, mast.nextSibling) : view.parentNode.insertBefore(b, view)); }
+    if (!document.getElementById('x5-kpis')) { const kp = document.createElement('div'); kp.id = 'x5-kpis'; kp.className = 'x5kp'; const bar = document.getElementById('x5-bar'); bar.parentNode.insertBefore(kp, bar); }
+    const mb = document.getElementById('mask');
+    if (mb && !document.getElementById('x5-skin')) { const sb = document.createElement('button'); sb.id = 'x5-skin'; sb.className = 'chip'; sb.type = 'button'; mb.parentNode.insertBefore(sb, mb); }
     paint();
     const c = window.claude; if (!c || typeof c.use !== 'function') return;
     c.use('downloads').then(d => { T.dl = d; if (A().S.tab === 'export') A().render(); }).catch(() => { });
