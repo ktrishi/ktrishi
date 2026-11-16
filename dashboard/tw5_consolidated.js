@@ -224,7 +224,7 @@
     const m = M(), h = H(), chk = allChecks(), nf = count(chk, 'fail'), nw = count(chk, 'warn'), L = T.live;
     const built = new Date(m.builtAt), ageH = (Date.now() - built.getTime()) / 36e5, bd = bdBetween(m.builtAt.slice(0, 10), todayIST());
     const dataTone = bd >= 2 ? 'b' : bd === 1 ? 'w' : 'g';
-    const nav = m.lineage && m.lineage[1] ? m.lineage[1].asOf : null;
+    const nav = m.lineage && m.lineage[1] ? (m.lineage[1].oldest || m.lineage[1].asOf) : null;
     let live;
     if (L.state === 'running') live = 'Live NSE: checking ' + L.done + '/' + L.n + '…';
     else if (L.state === 'ok') { const lm = liveMarks(), fx = foProximity(); live = '<span class="dotx ' + (fx.length ? 'b' : 'g') + '"></span>Live NSE ' + hhmm(L.at) + ': equity ' + h.sgn(lm.total, v => h.money(v)) + ' vs build' + (fx.length ? ' · <b>' + fx.length + ' short option legs at or within 2% of spot</b>' : ''); }
@@ -235,7 +235,7 @@
     return '<div class="wrap"><span><span class="dotx ' + (nf ? 'b' : nw ? 'w' : 'g') + '"></span>Audit ran on open ' + hhmm(T.openedAt) + ': <b>' + nf + ' fail · ' + nw + ' warn</b></span><span class="sep"></span>'
       + '<span>Portfolio score <b>' + Math.round(R().scores.overall) + '</b>/100</span><span class="sep"></span>'
       + '<span><span class="dotx ' + dataTone + '"></span>Data built <b>' + istStamp(m.builtAt) + '</b>' + (ageH > 1 ? ' (' + (ageH < 48 ? Math.round(ageH) + 'h' : Math.round(ageH / 24) + 'd') + ' ago)' : '') + '</span><span class="sep"></span>'
-      + '<span>NAV ' + h.fmtD(nav) + '</span><span class="sep"></span><span>' + live + '</span>'
+      + '<span>NAVs ' + h.fmtD(nav) + ' <span title="AMFI publishes NAV for a day at about 23:00 IST, so during the day the latest NAV is the previous trading day">(T−1 by design)</span></span><span class="sep"></span><span>' + live + '</span>'
       + '<span style="flex:1"></span><button data-x5="goupd">Update &amp; Audit →</button></div>';
   }
   function paint() {

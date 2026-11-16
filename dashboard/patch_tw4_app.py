@@ -37,6 +37,9 @@ PATCHES = [
      "health: [() => window.TW5.tabHealth(tabHealth)], inbox:"),
     ("k === 'health' && R.health.rows.filter(r => r.status === 'attention' && (S.member === 'all' || r.member === S.member)).length ? '<span class=\"n\">' + R.health.rows.filter(r => r.status === 'attention' && (S.member === 'all' || r.member === S.member)).length + '</span>' : ",
      "k === 'health' && window.TW5 && window.TW5.staleCount(S.member) ? '<span class=\"n\">' + window.TW5.staleCount(S.member) + '</span>' : "),
+    # 6 header shows the oldest equity-fund NAV date, not the liquid fund's calendar-day NAV
+    ("' · NAV ' + fmtD(M.lineage[1].asOf)",
+     "' · NAV ' + fmtD(M.lineage[1].oldest || M.lineage[1].asOf)"),
     # 5 boot: status bar, audit on open, live NSE check
     ("render(); startInbox();",
      "render(); startInbox(); if (window.TW5) window.TW5.boot();"),
