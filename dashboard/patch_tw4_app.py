@@ -5,7 +5,8 @@ Usage (on the PC, in financial/reports):
     python patch_tw4_app.py [path\to\tw4_app.js]
     python patch_tw4_app.py --check    # report whether tw4_app.js is already patched; changes nothing
 
-Idempotent: a file that already carries the TW5 marker is left alone. Every replacement is an
+Idempotent and upgradable: the pristine file is kept as tw4_app.orig.js; a newer tw5_consolidated.js is
+re-applied from it, and a tw4_app.js edited by hand after patching is refused rather than overwritten. Every replacement is an
 exact-string replace guarded by an assert, per the TW write rules. build_v4.js then inlines the
 patched tw4_app.js as before; nothing else in the pipeline changes.
 """
@@ -46,20 +47,43 @@ PATCHES = [
 ]
 
 
+APP_HEAD = '/* tw4_app.js'   # first line of the original app; everything before it is the TW5 module
+
+
+def patched(base):
+    for old, new in PATCHES:
+        assert base.count(old) == 1, 'patch anchor not found exactly once: ' + old[:70]
+        base = base.replace(old, new)
+    return base
+
+
 def main():
     src = io.open(APP, encoding='utf-8').read()
-    if MARK in src:
-        print('already patched:', APP); return 0
-    if '--check' in sys.argv:
-        print('NOT patched:', APP); return 1
-    for old, new in PATCHES:
-        assert src.count(old) == 1, 'patch anchor not found exactly once: ' + old[:70]
-        src = src.replace(old, new)
+    orig = APP[:-3] + '.orig.js'          # pristine tw4_app.js, kept so a newer module can be re-applied
     mod = io.open(MOD, encoding='utf-8').read()
+    if MARK in src:
+        if not os.path.exists(orig):
+            print('patched (no .orig.js kept, cannot verify the module version):', APP); return 0
+        base = io.open(orig, encoding='utf-8').read()
+        pb = patched(base)
+        if src[src.index(APP_HEAD):] != pb[pb.index(APP_HEAD):]:
+            print('ERROR: tw4_app.js was edited after patching; restore its .orig.js or merge by hand. Nothing written.'); return 1
+        want = MARK + '\n' + mod + '\n' + patched(base)
+        if src == want:
+            print('already patched, module current:', APP); return 0
+        if '--check' in sys.argv:
+            print('patched, module OUT OF DATE:', APP); return 1
+    else:
+        if '--check' in sys.argv:
+            print('NOT patched:', APP); return 1
+        base = src
+        assert APP_HEAD in base, 'tw4_app.js does not start with the expected header'
+        io.open(orig, 'w', encoding='utf-8', newline='\n').write(base)
+        want = MARK + '\n' + mod + '\n' + patched(base)
     bak = APP + '.bak.%d_tw5' % int(time.time() * 1000)
     shutil.copy2(APP, bak)
-    io.open(APP, 'w', encoding='utf-8', newline='\n').write(MARK + '\n' + mod + '\n' + src)
-    print('patched', APP, '| backup', bak)
+    io.open(APP, 'w', encoding='utf-8', newline='\n').write(want)
+    print('patched', APP, '| backup', bak, '| pristine copy', orig)
     return 0
 
 

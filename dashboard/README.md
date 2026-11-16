@@ -52,17 +52,23 @@ the unpatched file. Until the patch is applied, these tabs survive only until th
 3. Nothing else changes. The routines already republish V4 **without** `capabilities`, which keeps
    the new declaration (`downloads` plus the `cm-market` connector). Do not pass `capabilities: {}`.
 
-## Retiring V2
-V2 still publishes from `gen_artifact_v2.js`, and `audit.js` is still the reconciliation source
-that `build_v4.js` checks against, so keep the build. Unpin the V2 page and stop opening it.
-Stop publishing it only after the routine prompts have been edited in the desktop app.
+## ETF prices (`price_etfs.py`)
+Demat ETF rows carry an ISIN but no NSE symbol, so the symbol-based price step never priced them.
+`price_etfs.py` downloads NSE's official CM bhavcopy for `nav_calendar.last_session()` and matches by ISIN.
+Before ~19:00 IST the day's bhavcopy is not out, so the script reports SKIP; the 23:30 IST run prices them.
+`inspect` shows the row layout, a plain run is a dry run, `--apply` backs up and writes. Exit 0 ok / SKIP, 2 some
+ISINs missing or STALE, 1 download or layout problem.
 
-**V2 prints family PANs in its Members table.** That is a reason to stop sharing that page now.
+## Schedule
+`TW Update Now` runs at 10:30 and 23:30 IST. The 23:30 run picks up that day's NAVs (AMFI publishes ~23:00)
+and the official closing bhavcopy (stocks and ETFs). The morning run syncs Kite and FoF NAVs.
+
+## Retiring V2
+V2 still publishes from `gen_artifact_v2.js`, and `audit.js` is still the reconciliation source that
+`build_v4.js` checks against, so keep the build. V2 is unpinned; do not share its link.
 
 ## Not merged on purpose
-- *Confidential Portfolio Review*: a TrustPlutus client portfolio (₹31.55 Cr), not family wealth.
-- *Growth Sleeve Monitor*: an undeployed ₹25L plan with 30-Aug prices; nothing is invested yet.
-- *F&O Probability Desk*: superseded by the Derivatives tab (live `FO` data, refreshed 16-Nov).
-- *Morning Brief*, *NSE Quality Stocks*: market research, not wealth records.
+Client portfolio reviews (not family wealth), an undeployed growth-sleeve plan, the September F&O desk
+(superseded by the Derivatives tab), and market-research pages.
 
 Informational only. Not investment, tax or legal advice.
