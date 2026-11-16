@@ -450,8 +450,10 @@
     if (t.dataset.x5cp) { const X = exports_()[t.dataset.x5cp]; if (X) H().copy(X[2]()); }
   });
 
+  const NAME = 'Wealth Dashboard';
   async function boot() {
     injectCss();
+    try { document.title = NAME; const b1 = document.querySelector('.brand h1'); if (b1) b1.textContent = NAME; } catch (e) { }
     const view = document.getElementById('view');
     if (view && !document.getElementById('x5-bar')) { const b = document.createElement('div'); b.id = 'x5-bar'; b.className = 'x5bar'; const mast = document.querySelector('header.mast'); (mast && mast.parentNode ? mast.parentNode.insertBefore(b, mast.nextSibling) : view.parentNode.insertBefore(b, view)); }
     if (!document.getElementById('x5-kpis')) { const kp = document.createElement('div'); kp.id = 'x5-kpis'; kp.className = 'x5kp'; const bar = document.getElementById('x5-bar'); bar.parentNode.insertBefore(kp, bar); }

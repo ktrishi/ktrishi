@@ -87,5 +87,29 @@ def main():
     return 0
 
 
+NAME_OLD, NAME_NEW = 'Tiwari Family Wealth', 'Wealth Dashboard'
+
+
+def rename_template():
+    """The page name lives in tw4_template.html (<title> and the masthead). Rename it there once, with a backup.
+    The patched app also renames the masthead at runtime, so this is only for the gallery / tab title."""
+    tpl = os.path.join(os.path.dirname(APP), 'tw4_template.html')
+    if not os.path.exists(tpl):
+        print('note: tw4_template.html not found next to tw4_app.js; page title unchanged'); return
+    t = io.open(tpl, encoding='utf-8').read()
+    old, new = '<title>' + NAME_OLD + '</title>', '<title>' + NAME_NEW + '</title>'
+    if new in t:
+        print('template title already', NAME_NEW); return
+    if t.count(old) != 1:
+        print('note: <title>%s</title> not found exactly once in tw4_template.html; page title unchanged' % NAME_OLD); return
+    if '--check' in sys.argv:
+        print('template title NOT renamed'); return
+    shutil.copy2(tpl, tpl + '.bak.%d_tw5' % int(time.time() * 1000))
+    io.open(tpl, 'w', encoding='utf-8', newline='\n').write(t.replace(old, new).replace('<h1>' + NAME_OLD + '</h1>', '<h1>' + NAME_NEW + '</h1>'))
+    print('template renamed to', NAME_NEW)
+
+
 if __name__ == '__main__':
-    sys.exit(main())
+    rc = main()
+    rename_template()
+    sys.exit(rc)
