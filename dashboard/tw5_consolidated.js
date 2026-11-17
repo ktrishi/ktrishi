@@ -189,7 +189,9 @@
     const eqU = cls('Unlisted'); const bad = ties.filter(([c, v, t]) => t != null && Math.abs(v + (c === 'Equity' ? eqU : 0) - t) > 1 && Math.abs(v - t) > 1);
     bad.length ? add('fail', 'Reconcile', 'Holdings do not add up to the audited class totals', bad.map(([c, v, t]) => c + ' ' + Math.round(v) + ' vs ' + Math.round(t)).join('; '), 'Do not rely on the headline until rebuilt.') : add('pass', 'Reconcile', 'Every asset class adds up to the audited totals', ties.map(([c]) => c).join(', '));
     const pa = m.prodAudit || {}; const dNet = Math.round((m.totals.netTracked || 0) - (pa.net || 0));
-    (pa.reconcile && pa.reconcile.ok && dNet === 0) ? add('pass', 'Reconcile', 'Build reconciles to the production audit, Δ₹0', (pa.reconcile.note || '').slice(0, 160)) : add('fail', 'Reconcile', 'Build does not reconcile to the production audit (Δ₹' + dNet + ')', (pa.reconcile && pa.reconcile.note) || '', 'Stop: restore the last backup and rebuild.');
+    const ov = m.overlay;
+    if (ov && pa.reconcile && pa.reconcile.ok && dNet === Math.round(ov.dNet || 0) && dNet !== 0) add('warn', 'Reconcile', 'Reconciles to the PC audit except the ' + ov.kind + ' update applied in this page (Δ₹' + dNet.toLocaleString('en-IN') + ')', (ov.source || '') + '. ' + (ov.note || ''), 'The next full update applies the same report on the PC and clears this.');
+    else (pa.reconcile && pa.reconcile.ok && dNet === 0) ? add('pass', 'Reconcile', 'Build reconciles to the production audit, Δ₹0', (pa.reconcile.note || '').slice(0, 160)) : add('fail', 'Reconcile', 'Build does not reconcile to the production audit (Δ₹' + dNet + ')', (pa.reconcile && pa.reconcile.note) || '', 'Stop: restore the last backup and rebuild.');
     // 4 price freshness for listed rows
     const lastSess = (m.lineage && m.lineage[0] && m.lineage[0].asOf) || td;
     const staleEq = H_.filter(h => h.cls === 'Equity' && h.asOf && h.asOf < lastSess);
