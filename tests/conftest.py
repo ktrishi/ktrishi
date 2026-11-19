@@ -109,3 +109,87 @@ def build_signals(**kw):
 @pytest.fixture
 def make_signals():
     return build_signals
+
+
+class FakeKite:
+    """Stands in for kiteconnect.KiteConnect; quotes in the SDK's shape."""
+
+    SPOTS = {"NSE:NIFTY 50": (25371.1, 256265), "NSE:NIFTY BANK": (62627.75, 260105), "NSE:INDIA VIX": (16.25, 264969)}
+    FUTS = {"NIFTY": 25397.0, "BANKNIFTY": 62700.0}
+
+    def __init__(self, instruments=None, now=None):
+        self.instr = {i["tradingsymbol"]: i for i in (instruments or build_instruments())}
+        self.now = now or ist_dt(2026, 11, 19, 13, 0)
+        self.quote_calls = []
+        self.raise_token_error = False
+        self.access_token = None
+        self.index_timestamp = None
+        self.index_close = 25410.0
+        self.oi = 100000
+
+    def login_url(self):
+        return "https://kite.zerodha.com/connect/login?v=3&api_key=k"
+
+    def generate_session(self, request_token, api_secret):
+        return {"access_token": f"tok-{request_token}"}
+
+    def set_access_token(self, t):
+        self.access_token = t
+
+    def instruments(self, exchange=None):
+        return list(self.instr.values())
+
+    def _q(self, last, token=0, oi=0, ts=None, bid=0.0, ask=0.0):
+        ts = ts or self.now
+        return {"instrument_token": token, "timestamp": ts, "last_price": last, "volume": 1000, "oi": oi,
+                "ohlc": {"open": last, "high": last, "low": last, "close": last},
+                "depth": {"buy": [{"price": bid, "quantity": 65, "orders": 1}],
+                          "sell": [{"price": ask, "quantity": 65, "orders": 1}]}}
+
+    def quote(self, *instruments):
+        from kiteconnect.exceptions import TokenException
+        from fo_dash.pricing import black76_price, year_fraction
+        ins = instruments[0] if instruments and isinstance(instruments[0], list) else list(instruments)
+        self.quote_calls.append(list(ins))
+        if self.raise_token_error:
+            raise TokenException("Incorrect `api_key` or `access_token`.")
+        out = {}
+        for s in ins:
+            if s in self.SPOTS:
+                px, tok = self.SPOTS[s]
+                out[s] = self._q(px, tok, ts=self.index_timestamp or self.now)
+                continue
+            i = self.instr.get(s.split(":", 1)[1])
+            if i is None:
+                out[s] = self._q(1.0)
+            elif i["instrument_type"] == "FUT":
+                out[s] = self._q(self.FUTS[i["name"]], i["instrument_token"], oi=self.oi)
+            else:
+                F = self.FUTS[i["name"]]
+                px = max(0.05, round(black76_price(F, i["strike"], year_fraction(self.now, i["expiry"]), 0.14,
+                                                   i["instrument_type"]) / 0.05) * 0.05)
+                out[s] = self._q(px, i["instrument_token"], oi=self.oi, bid=round(px - 0.05, 2), ask=round(px + 0.05, 2))
+        return out
+
+    def historical_data(self, instrument_token, from_date, to_date, interval, continuous=False, oi=False):
+        days = []
+        d = to_date.date() if hasattr(to_date, "date") else to_date
+        closes = [25000.0, 25100.0, 25228.0, self.index_close]
+        for j, c in enumerate(closes):
+            days.append({"date": ist_dt(d.year, d.month, d.day) , "open": c, "high": c + 150, "low": c - 150,
+                         "close": c, "volume": 0})
+        return days
+
+
+@pytest.fixture
+def fake_kite():
+    return FakeKite()
+
+
+def make_source(fake, tmp_path, sleep_fn=lambda s: None, logged_in=True, now=None):
+    from fo_dash.kite_client import KiteSource, TokenStore
+    now = now or ist_dt(2026, 11, 19, 13, 0)
+    ts = TokenStore(tmp_path / "token.json")
+    if logged_in:
+        ts.save("abc", now)
+    return KiteSource(fake, ts, "secret", now_fn=lambda: now, sleep_fn=sleep_fn)
