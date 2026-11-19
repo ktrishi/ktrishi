@@ -146,7 +146,6 @@ One Python process (`app`) runs a scheduler, the collector, the engine and the w
 - Strike window ±8% of spot; 5-minute snapshot interval; reassessment times 09:45 / 12:30 / 15:05; change thresholds 0.3% / 0.4%.
 - Days-to-expiry buckets and shrinkage-towards-prior learning instead of any ML model, because of small sample sizes.
 - Writers-short assumption for gamma.
-- Test data: live chain snapshots captured now through the Kite connector, whose quote output matches the `kiteconnect` SDK's `quote()` shape; a small converter maps the connector's instrument records to the SDK's `instruments()` shape. Bhavcopy parser tested against hand-built fixtures in the published UDiFF column layout. Step 1 ships a one-off `capture_samples` command Rishi runs once on the laptop to save real SDK output and a few weeks of bhavcopy, which become the definitive fixtures.
 - Build order: (1) collector + engine + dashboard + log with prior weights labelled uncalibrated; (2) back-test + learner; (3) optional AI commentary.
 
 ## 8. Left to the builder
