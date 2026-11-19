@@ -266,3 +266,10 @@ def orch(store, clock, notes):
     from fo_dash.orchestrator import Orchestrator
     return Orchestrator(store, build_fake_source(clock), clock.now,
                         notify_fn=lambda t, b: notes.append((t, b)), keep_awake_fn=lambda on: None)
+
+
+@pytest.fixture
+def client(store, orch, clock):
+    from fastapi.testclient import TestClient
+    from fo_dash.web.app import create_app
+    return TestClient(create_app(store, orch, orch.source, clock.now))
