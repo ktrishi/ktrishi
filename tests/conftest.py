@@ -95,3 +95,17 @@ def sample_chain():
 def store():
     from fo_dash.storage import Store
     return Store(":memory:")
+
+
+def build_signals(**kw):
+    from fo_dash.models import Signals
+    base = dict(forward=25200.0, max_pain=None, supports=[], resistances=[], wall_centre=None, pcr_total=None,
+                pcr_atm=None, atm_iv=0.14, sigma_remaining=200.0, gamma_pin=None, pivot=None, momentum_3d=None,
+                oi_change={}, centres={"forward": 25200.0}, iv_by_strike={}, quality="ok")
+    base.update(kw)
+    return Signals(**base)
+
+
+@pytest.fixture
+def make_signals():
+    return build_signals
