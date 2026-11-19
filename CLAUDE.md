@@ -1,15 +1,23 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code in this repository.
 
-## Repository status
+## What this is
+A personal, read-only F&O expiry prediction dashboard for Nifty (weekly + monthly) and Bank Nifty (monthly). It is a Python app that runs on the owner's Windows laptop against the Zerodha Kite Connect API. Design: `docs/superpowers/specs/2026-11-19-fo-expiry-dashboard-design.md`. Plan: `docs/superpowers/plans/2026-11-19-fo-expiry-dashboard.md`.
 
-This repository (`ktrishi/ktrishi`) is currently empty — no commits, source files, or configuration exist yet. There is no build system, test suite, or code architecture to document.
+## Commands
+- Install: `python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`
+- Tests: `.venv/bin/pytest -q`; a single test: `.venv/bin/pytest tests/test_signals.py::test_oi_structure -q`
+- Run: `python -m fo_dash run` (needs `.env` with `KITE_API_KEY`/`KITE_API_SECRET`). Offline: `python -m fo_dash run --demo`
+- Back-test: `python -m fo_dash backtest --from 2024-07-08 --to YYYY-MM-DD` (needs NSE access, so run it from an Indian IP)
 
-Once code is added to this repository, update this file to cover:
+## Architecture (`fo_dash/`)
+Data flows: `kite_client` (token, rate-limited quotes) → `collector` (ChainSnapshot) → `signals` → `predict` (centre + bands) → `reassess` (changed? reason). `orchestrator` drives these on an APScheduler and logs gaps. `learner` scores locked predictions after expiry and refits weights with shrinkage. `backtest/` replays NSE UDiFF bhavcopies through the same engine to fit the prior. `web/` holds the FastAPI app (`/api/state`, `/kite/login`, `/kite/callback`) and a static Chart.js page. `storage` is SQLite. Shared types are in `models.py`; constants in `config.py`.
 
-- **Commands** — how to install dependencies, build, lint, run tests (including a single test), and run the project locally.
-- **Architecture** — the high-level structure of the codebase: major modules/services, how they interact, and any non-obvious design decisions that span multiple files.
-- **Conventions** — project-specific conventions not already obvious from the code itself.
-
-Until then, there is nothing further for an AI assistant to infer about this project.
+## Conventions
+- Never call Kite order/GTT/alert APIs. The app is read-only.
+- Underlyings live only in `config.UNDERLYINGS`. Do not hard-code "NIFTY"/"BANKNIFTY" elsewhere (`demo.py` and tests are the exceptions).
+- Expiry dates come from the instrument master, never from weekdays.
+- All datetimes are IST-aware (`config.IST`); `tzdata` is required on Windows.
+- Never return a centre without bands. When IV is unavailable, set bands to None with an explicit note.
+- Kite and the clock are injected everywhere. Tests use the fakes in `tests/conftest.py` and need no network.
