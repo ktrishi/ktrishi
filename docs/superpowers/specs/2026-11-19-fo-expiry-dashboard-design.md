@@ -1,6 +1,6 @@
 # F&O Expiry Prediction Dashboard — Design
 
-Date: 2026-11-19 · Owner: Rishi (personal use) · Status: ready for approval
+Date: 2026-11-19 · Owner: Rishi (personal use) · Status: approved by Rishi 2026-11-19
 
 ## 1. Intent
 
