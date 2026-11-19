@@ -42,6 +42,10 @@ function panelCard(p) {
   q.append(el("span", {}, `Spot ${lv(p.spot)}`), el("span", {}, `Fut ${lv(p.future)}`), el("span", {}, `VIX ${p.vix == null ? "—" : nf2.format(p.vix)}`));
   card.append(q);
   const pr = p.prediction;
+  const stamp = (s, withDate) => new Date(s).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour12: false,
+    hour: "2-digit", minute: "2-digit", ...(withDate ? { day: "2-digit", month: "short" } : {}) });
+  const today = (s) => new Date(s).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }) === new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
+  card.append(el("div", { class: "sub" }, `data ${p.data_time ? stamp(p.data_time, !today(p.data_time)) : "—"} · prediction ${stamp(pr.made_at, !today(pr.made_at))} IST`));
   const hl = el("div", { class: "headline" });
   hl.append(el("div", { class: "lbl" }, "Expected settlement"), el("div", { class: "centre" }, lv(pr.centre)));
   const r = el("div", { class: "range" });

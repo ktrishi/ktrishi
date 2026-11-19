@@ -94,3 +94,77 @@ def test_start_registers_jobs(orch, clock):
     sched = orch.start(run=False)
     ids = {j.id for j in sched.get_jobs()}
     assert {"snapshot", "reassess-0945", "reassess-1230", "reassess-1505", "settle", "missed"} <= ids
+
+
+# ---- final-review fixes
+
+def test_missed_settlement_backfilled_next_day(orch, clock, store):
+    clock.set(2026, 11, 23, 9, 45)
+    orch.morning_setup()
+    orch.reassess_job(time(9, 45))
+    clock.set(2026, 11, 24, 10, 0)           # laptop was shut before 15:45 on expiry day
+    orch.morning_setup()
+    assert store.outcome("NIFTY", date(2026, 11, 23)) == 25228.0   # 23-Nov candle close from history
+    assert store.current_weights("NIFTY", "le1").source == "live"
+
+
+def test_settle_retried_when_candle_not_ready(orch, clock, store):
+    clock.set(2026, 11, 23, 9, 45)
+    orch.morning_setup()
+    orch.reassess_job(time(9, 45))
+    clock.set(2026, 11, 23, 15, 45)
+    orch.source.logged_in = False
+    orch.settle_job()
+    assert store.outcome("NIFTY", date(2026, 11, 23)) is None
+    orch.source.logged_in = True
+    clock.set(2026, 11, 23, 16, 0)
+    orch.settle_job()
+    assert store.outcome("NIFTY", date(2026, 11, 23)) == 25410.0
+    trig = orch.start(run=False).get_job("settle").trigger
+    after = trig.get_next_fire_time(None, ist_dt(2026, 11, 23, 15, 46))
+    assert after == ist_dt(2026, 11, 23, 16, 0)
+
+
+def test_holiday_check_runs_from_snapshot_when_0920_setup_missed(orch, clock, store):
+    orch.source.index_timestamp = ist_dt(2026, 11, 18, 15, 30)
+    clock.set(2026, 11, 19, 9, 15)
+    orch.morning_setup()                      # 09:20 setup never ran (laptop asleep)
+    clock.set(2026, 11, 19, 9, 45)
+    orch.snapshot_job()
+    orch.reassess_job(time(9, 45))
+    assert store.day_status(date(2026, 11, 19)) == "holiday"
+    assert store.snapshots_on(date(2026, 11, 19)) == 0
+    assert store.predictions("NIFTY", "weekly", date(2026, 11, 23)) == []
+
+
+def test_no_snapshot_before_holiday_check(orch, clock, store):
+    clock.set(2026, 11, 19, 9, 16)
+    orch.morning_setup()
+    orch.snapshot_job()
+    assert store.snapshots_on(date(2026, 11, 19)) == 0
+
+
+def test_panels_roll_after_close_on_expiry_day(orch, clock):
+    clock.set(2026, 11, 23, 10, 0)
+    orch.morning_setup()
+    clock.set(2026, 11, 23, 16, 0)
+    assert orch.current_expiries() == {"NIFTY": {"weekly": date(2026, 12, 1), "monthly": date(2026, 12, 29)},
+                                       "BANKNIFTY": {"monthly": date(2026, 12, 29)}}
+
+
+def test_jobs_are_serialised(orch, clock, store):
+    import threading
+    clock.set(2026, 11, 19, 10, 0)
+    orch.morning_setup()
+    done = threading.Event()
+    with orch.lock:
+        t = threading.Thread(target=lambda: (orch.snapshot_job(), done.set()))
+        t.start()
+        assert not done.wait(0.3)            # blocked while another job holds the lock
+    assert done.wait(5)
+    t.join()
+
+
+def test_scheduler_single_worker(orch):
+    sched = orch.start(run=False)
+    assert sched._lookup_executor("default")._pool._max_workers == 1

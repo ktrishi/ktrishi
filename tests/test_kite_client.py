@@ -37,3 +37,31 @@ def test_complete_login_saves_token(fake_kite, tmp_path):
     src = make_source(fake_kite, tmp_path, logged_in=False)
     src.complete_login("rt")
     assert src.is_logged_in() and fake_kite.access_token == "tok-rt"
+
+
+def test_rejected_token_is_cleared(fake_kite, tmp_path):
+    src = make_source(fake_kite, tmp_path, logged_in=True)
+    fake_kite.raise_token_error = True
+    with pytest.raises(LoginRequired):
+        src.quote(["NSE:NIFTY 50"])
+    assert src.is_logged_in() is False
+
+
+def test_rate_limit_holds_across_threads(fake_kite, tmp_path):
+    import threading
+    sleeps = []
+    src = make_source(fake_kite, tmp_path, sleep_fn=sleeps.append, logged_in=True)
+    entered = threading.Event()
+    real = fake_kite.quote
+
+    def slow_quote(*a):
+        entered.set()
+        threading.Event().wait(0.3)
+        return real(*a)
+    fake_kite.quote = slow_quote
+    t1 = threading.Thread(target=lambda: src.quote(["NSE:NIFTY 50"]))
+    t1.start()
+    entered.wait(2)
+    src.quote(["NSE:NIFTY 50"])
+    t1.join()
+    assert len(sleeps) == 1

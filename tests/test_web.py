@@ -53,3 +53,17 @@ def test_login_redirects_to_kite(client):
 
 def test_index_served(client):
     assert "Log in to Kite" in client.get("/").text
+
+
+def test_panels_show_their_own_data_time():
+    from pathlib import Path
+    js = (Path(__file__).parent.parent / "fo_dash/web/static/app.js").read_text()
+    assert "p.data_time" in js and "pr.made_at" in js
+
+
+def test_state_rolls_panels_after_close(client, orch, clock):
+    clock.set(2026, 11, 23, 10, 0)
+    orch.morning_setup()
+    clock.set(2026, 11, 23, 16, 0)
+    st = client.get("/api/state").json()
+    assert st["panels"][0]["expiry"] == "2026-12-01"

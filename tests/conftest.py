@@ -40,7 +40,7 @@ def _opts(name, expiry, lo, hi, step, tok):
     for k in range(lo, hi + step, step):
         for t in ("CE", "PE"):
             tok[0] += 1
-            out.append({"instrument_token": tok[0], "tradingsymbol": f"{name}{ymon}{k}{t}",
+            out.append({"instrument_token": tok[0], "tradingsymbol": f"{name}{expiry:%y%b%d}{k}{t}".upper(),
                         "name": name, "expiry": expiry, "strike": float(k), "lot_size": 65,
                         "instrument_type": t, "segment": "NFO-OPT", "exchange": "NFO"})
     return out

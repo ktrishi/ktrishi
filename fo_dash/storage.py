@@ -114,6 +114,11 @@ class Store:
         r = self._r("SELECT settlement FROM outcomes WHERE underlying=? AND expiry=?", (underlying, expiry.isoformat()))
         return r[0][0] if r else None
 
+    def unsettled_expiries(self, underlying: str) -> list[date]:
+        rows = self._r("SELECT DISTINCT expiry FROM predictions WHERE underlying=? AND locked=1 AND expiry NOT IN "
+                       "(SELECT expiry FROM outcomes WHERE underlying=?) ORDER BY expiry", (underlying, underlying))
+        return [date.fromisoformat(e) for (e,) in rows]
+
     def save_scores(self, rows: list[ScoreRow]) -> None:
         for s in rows:
             self._w("INSERT INTO scores(underlying, kind, expiry, made_at, bucket, centre, sigma, settlement, err_pct, in68, in90,"

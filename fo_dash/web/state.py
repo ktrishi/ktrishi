@@ -23,7 +23,7 @@ def _when(dt: datetime, now: datetime) -> str:
 
 def _panel(store, orch, cfg, kind, now) -> dict:
     key = f"{cfg.name}-{kind}"
-    expiry = orch.expiries.get(cfg.name, {}).get(kind)
+    expiry = orch.current_expiries(now).get(cfg.name, {}).get(kind)
     base = {"key": key, "underlying": cfg.name, "kind": kind, "expiry": None, "expiry_label": None,
             "dte_bucket": None, "spot": None, "future": None, "vix": None, "prediction": None, "signals": None,
             "supports": [], "resistances": [], "weights": {}, "oi_chart": {"strikes": [], "ce_oi": [], "pe_oi": [],
@@ -68,6 +68,11 @@ def _panel(store, orch, cfg, kind, now) -> dict:
 
 
 def build_state(store, orch, now: datetime) -> dict:
+    with orch.lock:
+        return _build_state(store, orch, now)
+
+
+def _build_state(store, orch, now: datetime) -> dict:
     today = now.date()
     logged_in = orch.source.is_logged_in()
     login = "ok" if logged_in else "login_needed"
