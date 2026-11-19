@@ -117,15 +117,20 @@ class FakeKite:
     SPOTS = {"NSE:NIFTY 50": (25371.1, 256265), "NSE:NIFTY BANK": (62627.75, 260105), "NSE:INDIA VIX": (16.25, 264969)}
     FUTS = {"NIFTY": 25397.0, "BANKNIFTY": 62700.0}
 
-    def __init__(self, instruments=None, now=None):
+    def __init__(self, instruments=None, now=None, now_fn=None):
         self.instr = {i["tradingsymbol"]: i for i in (instruments or build_instruments())}
-        self.now = now or ist_dt(2026, 11, 19, 13, 0)
+        self._now = now or ist_dt(2026, 11, 19, 13, 0)
+        self.now_fn = now_fn
         self.quote_calls = []
         self.raise_token_error = False
         self.access_token = None
         self.index_timestamp = None
         self.index_close = 25410.0
         self.oi = 100000
+
+    @property
+    def now(self):
+        return self.now_fn() if self.now_fn else self._now
 
     def login_url(self):
         return "https://kite.zerodha.com/connect/login?v=3&api_key=k"
@@ -172,13 +177,15 @@ class FakeKite:
         return out
 
     def historical_data(self, instrument_token, from_date, to_date, interval, continuous=False, oi=False):
-        days = []
+        from datetime import timedelta
         d = to_date.date() if hasattr(to_date, "date") else to_date
         closes = [25000.0, 25100.0, 25228.0, self.index_close]
+        out = []
         for j, c in enumerate(closes):
-            days.append({"date": ist_dt(d.year, d.month, d.day) , "open": c, "high": c + 150, "low": c - 150,
-                         "close": c, "volume": 0})
-        return days
+            day = d - timedelta(days=len(closes) - 1 - j)
+            out.append({"date": ist_dt(day.year, day.month, day.day), "open": c, "high": c + 150, "low": c - 150,
+                        "close": c, "volume": 0})
+        return out
 
 
 @pytest.fixture
@@ -193,3 +200,69 @@ def make_source(fake, tmp_path, sleep_fn=lambda s: None, logged_in=True, now=Non
     if logged_in:
         ts.save("abc", now)
     return KiteSource(fake, ts, "secret", now_fn=lambda: now, sleep_fn=sleep_fn)
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = ist_dt(2026, 11, 19, 10, 0)
+
+    def set(self, y, m, d, hh, mm):
+        self.t = ist_dt(y, m, d, hh, mm)
+
+    def now(self):
+        return self.t
+
+
+def build_fake_source(clock):
+    import os
+    from pathlib import Path
+    from fo_dash.kite_client import KiteSource, TokenStore
+
+    class FakeSource(KiteSource):
+        def __init__(self):
+            super().__init__(FakeKite(now_fn=clock.now), TokenStore(Path(os.devnull)), "secret", clock.now,
+                             sleep_fn=lambda s: None)
+            self.logged_in = True
+            self.completed_with = None
+
+        def is_logged_in(self):
+            return self.logged_in
+
+        def complete_login(self, request_token):
+            self.completed_with = request_token
+            self.logged_in = True
+
+        @property
+        def index_timestamp(self):
+            return self.kite.index_timestamp
+
+        @index_timestamp.setter
+        def index_timestamp(self, v):
+            self.kite.index_timestamp = v
+
+        @property
+        def index_close(self):
+            return self.kite.index_close
+
+        @index_close.setter
+        def index_close(self, v):
+            self.kite.index_close = v
+
+    return FakeSource()
+
+
+@pytest.fixture
+def clock():
+    return FakeClock()
+
+
+@pytest.fixture
+def notes():
+    return []
+
+
+@pytest.fixture
+def orch(store, clock, notes):
+    from fo_dash.orchestrator import Orchestrator
+    return Orchestrator(store, build_fake_source(clock), clock.now,
+                        notify_fn=lambda t, b: notes.append((t, b)), keep_awake_fn=lambda on: None)
