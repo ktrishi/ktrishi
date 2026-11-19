@@ -68,3 +68,30 @@ def build_instruments():
 @pytest.fixture
 def instruments():
     return build_instruments()
+
+
+def build_sample_chain(taken_at=None, kind="monthly"):
+    from fo_dash.models import ChainSnapshot, OptionQuote
+    from fo_dash.pricing import black76_price, year_fraction
+    taken_at = taken_at or ist_dt(2026, 11, 19, 13, 0)
+    expiry = date(2026, 11, 23)
+    T = year_fraction(taken_at, expiry)
+    ce_oi = [100, 200, 300, 800, 500]
+    pe_oi = [600, 700, 400, 200, 100]
+    opts = []
+    for i, k in enumerate(range(25000, 25500, 100)):
+        for t, oi in (("CE", ce_oi[i]), ("PE", pe_oi[i])):
+            px = round(black76_price(25200, k, T, 0.14, t) / 0.05) * 0.05
+            opts.append(OptionQuote(float(k), t, px, round(px - 0.5, 2), round(px + 0.5, 2), 1000, oi))
+    return ChainSnapshot("NIFTY", kind, expiry, expiry, taken_at, 25180.0, 25200.0, 16.25, opts)
+
+
+@pytest.fixture
+def sample_chain():
+    return build_sample_chain()
+
+
+@pytest.fixture
+def store():
+    from fo_dash.storage import Store
+    return Store(":memory:")
