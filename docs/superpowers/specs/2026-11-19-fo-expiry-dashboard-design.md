@@ -1,6 +1,6 @@
 # F&O Expiry Prediction Dashboard — Design
 
-Date: 2026-11-19 · Owner: Rishi (personal use) · Status: draft for approval
+Date: 2026-11-19 · Owner: Rishi (personal use) · Status: ready for approval
 
 ## 1. Intent
 
@@ -51,7 +51,7 @@ Why: Rishi wants a disciplined, repeatable read of expiry positioning (support/r
 
 - Approach B, for personal use (own trading decisions).
 - Runs on his Windows laptop.
-- Data via Kite Connect.
+- Data via Kite Connect. The Kite Connect app is created (paid Connect plan) with redirect URL `http://127.0.0.1:8050/kite/callback`; postback URL left blank (no orders, so no order webhooks). The dashboard therefore serves on port 8050. API key and secret live only in the laptop's local `.env`.
 
 ## 6. Design
 
@@ -133,7 +133,7 @@ One Python process (`app`) runs a scheduler, the collector, the engine and the w
 - Python 3.12 + a virtual environment; `setup.bat` installs dependencies; `start.bat` starts the app and opens the dashboard.
 - Optional Windows Task Scheduler entry to start the app at 09:00 on weekdays.
 - While running in market hours the app asks Windows not to sleep; if the laptop does sleep, missed snapshots/reassessments are logged as gaps.
-- Daily login: the dashboard's "Log in to Kite" button opens Kite's login page; Kite redirects to `http://127.0.0.1:<port>/kite/callback`, and the app exchanges the token and stores it locally until ~06:00 next day.
+- Daily login: the dashboard's "Log in to Kite" button opens Kite's login page; Kite redirects to `http://127.0.0.1:8050/kite/callback`, and the app exchanges the token and stores it locally until ~06:00 next day.
 - All data in a local folder (SQLite database + logs), backed up by simply copying the folder.
 
 ### 6.10 Later (not in first build)
