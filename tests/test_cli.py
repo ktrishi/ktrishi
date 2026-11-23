@@ -23,3 +23,9 @@ def test_demo_seeds_three_panels():
     assert [p["key"] for p in st["panels"]] == ["NIFTY-weekly", "NIFTY-monthly", "BANKNIFTY-monthly"]
     assert all(p["prediction"]["band68"] for p in st["panels"]) and len(st["panels"][0]["drift"]) == 2
     assert st["status"]["login"] == "ok"
+
+
+def test_demo_bat_runs_setup_then_demo():
+    from pathlib import Path
+    bat = (Path(__file__).parent.parent / "demo.bat").read_bytes().decode()
+    assert "\r\n" in bat and "call setup.bat" in bat and "-m fo_dash run --demo" in bat

@@ -23,6 +23,10 @@ A personal, **read-only** tool that runs on your Windows laptop. It reads the li
 - It never shows a single number without its range.
 - It doesn't run without your daily Kite login. Kite's rules require one, and the login lasts until 06:00 the next morning.
 
+## Just want to look? Double-click `demo.bat`
+
+After installing Python 3.12 (step 1 below), double-click **`demo.bat`**. The first time, it installs everything (1–2 minutes), then opens the dashboard with sample data in your browser. No Kite keys or login needed. Close the black window to stop it.
+
 ## First-time setup (once)
 
 1. **Install Python 3.12** from python.org. On the first installer screen, tick **"Add python.exe to PATH"**.
@@ -73,7 +77,7 @@ Until you run the back-test, predictions are labelled **"uncalibrated"** because
 | Command | What it does |
 |---|---|
 | `start.bat` (= `.venv\Scripts\python -m fo_dash run`) | Scheduler + dashboard |
-| `.venv\Scripts\python -m fo_dash run --demo` | Offline demo with sample data, no Kite needed |
+| `demo.bat` (double-click) | Offline demo with sample data, no Kite needed; runs setup first if needed |
 | `.venv\Scripts\python -m fo_dash backtest --from … --to …` | Fit weights on NSE history |
 | `.venv\Scripts\python -m fo_dash status` | Login state and which weights are in use |
 
