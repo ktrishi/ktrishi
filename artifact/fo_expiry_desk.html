@@ -1,0 +1,665 @@
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>F&amp;O Expiry Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Public+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: sticky navy masthead + contract tabs (same family as Tiwari Family Wealth); per contract a navy hero with the expected settlement and its ranges, then a 12-col grid of cards. */
+:root {
+  --bg: #f1f4f7; --surface: #ffffff; --surface2: #f7f9fb; --ink: #0f1a2c; --muted: #5a687b; --line: #dbe2ea;
+  --band: #0e1a2e; --band-ink: #e9eef6; --band-muted: #9bb0cc; --accent: #9a6b1c; --focus: #2d5fa8;
+  --good: #0b7a5a; --good-soft: #dff3ec; --bad: #b3322a; --bad-soft: #f8e1de; --warn: #a76a0b; --warn-soft: #f9ecd0; --info: #2f5d9e; --info-soft: #e0eaf7;
+  --ce: #2a78d6; --pe: #eb6834; --band68: rgba(42,120,214,.16); --fwd: #6c7a89;
+  --hero: #12233f; --hero-2: #1b3358; --hero-ink: #f3f6fb; --hero-muted: #a9bbd4; --hero-line: #e3b664; --hero-rule: rgba(255,255,255,.12); --hero-pos: #7fe0bd; --hero-neg: #ffa69c;
+  --shadow: 0 1px 2px rgba(15,26,44,.06), 0 4px 14px rgba(15,26,44,.05);
+  --serif: 'Newsreader', Georgia, 'Times New Roman', serif; --sans: 'Public Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0a101c; --surface: #121a2b; --surface2: #172138; --ink: #e8edf5; --muted: #93a1b6; --line: #25314a;
+  --band: #070c16; --band-ink: #e9eef6; --band-muted: #8296b3; --accent: #d9a84e; --focus: #7fa8e6;
+  --good: #3dc79a; --good-soft: #10332a; --bad: #f07b70; --bad-soft: #3a1a1a; --warn: #e8b04a; --warn-soft: #36290e; --info: #7fa8e6; --info-soft: #14284a;
+  --ce: #3987e5; --pe: #d95926; --band68: rgba(57,135,229,.22); --fwd: #9aa8b8;
+  --hero: #0f1c33; --hero-2: #17294a; --hero-ink: #eef2f9; --hero-muted: #8fa3c2; --hero-rule: rgba(255,255,255,.10); --hero-pos: #6fd6b0; --hero-neg: #ff9b90;
+  --shadow: 0 1px 2px rgba(0,0,0,.4); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0a101c; --surface: #121a2b; --surface2: #172138; --ink: #e8edf5; --muted: #93a1b6; --line: #25314a;
+  --band: #070c16; --band-ink: #e9eef6; --band-muted: #8296b3; --accent: #d9a84e; --focus: #7fa8e6;
+  --good: #3dc79a; --good-soft: #10332a; --bad: #f07b70; --bad-soft: #3a1a1a; --warn: #e8b04a; --warn-soft: #36290e; --info: #7fa8e6; --info-soft: #14284a;
+  --ce: #3987e5; --pe: #d95926; --band68: rgba(57,135,229,.22); --fwd: #9aa8b8;
+  --hero: #0f1c33; --hero-2: #17294a; --hero-ink: #eef2f9; --hero-muted: #8fa3c2; --hero-rule: rgba(255,255,255,.10); --hero-pos: #6fd6b0; --hero-neg: #ff9b90;
+  --shadow: 0 1px 2px rgba(0,0,0,.4); color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4 { margin: 0; text-wrap: balance; }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.wrap { max-width: 1320px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.mast { background: var(--band); color: var(--band-ink); position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); background: var(--band); z-index: 30; }
+.mast-top { display: flex; align-items: center; gap: 12px 16px; padding-block: 12px 8px; flex-wrap: wrap; }
+.brand { display: flex; flex-direction: column; min-width: 0; }
+.brand h1 { font: 600 22px/1.15 var(--serif); letter-spacing: .01em; }
+.brand span { font-size: 12px; color: var(--band-muted); }
+.sp { flex: 1 1 auto; }
+.chip { border: 1px solid rgba(255,255,255,.18); background: transparent; color: var(--band-ink); padding: 5px 11px; border-radius: 999px; font-size: 12.5px; white-space: nowrap; }
+.chip.live { border-color: rgba(127,224,189,.5); color: var(--hero-pos); }
+.chip.alert { border-color: rgba(255,166,156,.6); color: var(--hero-neg); }
+#refresh { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+#refresh:disabled { opacity: .6; cursor: progress; }
+.icon-btn { border: 1px solid rgba(255,255,255,.18); background: transparent; color: var(--band-ink); width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; }
+.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { background: transparent; border: 0; border-bottom: 3px solid transparent; color: var(--band-muted); padding: 9px 14px; white-space: nowrap; font-size: 13.5px; }
+.tab:hover { color: var(--band-ink); }
+.tab[aria-selected="true"] { color: var(--band-ink); border-bottom-color: var(--accent); font-weight: 600; }
+.tab .n { margin-left: 6px; font-size: 11px; padding: 1px 6px; border-radius: 999px; background: rgba(255,255,255,.14); }
+main { padding-block: 18px 40px; }
+.grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px; }
+.s4 { grid-column: span 4; } .s5 { grid-column: span 5; } .s6 { grid-column: span 6; } .s7 { grid-column: span 7; } .s8 { grid-column: span 8; } .s12 { grid-column: span 12; }
+@media (max-width: 1000px) { .s4 { grid-column: span 6; } .s5, .s6, .s7, .s8 { grid-column: span 12; } }
+@media (max-width: 620px) { .s4 { grid-column: span 12; } .brand h1 { font-size: 19px; } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; box-shadow: var(--shadow); min-width: 0; }
+.card h3 { font: 600 15px/1.3 var(--sans); margin-bottom: 2px; }
+.card .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 12px; }
+.sec-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 24px 0 10px; flex-wrap: wrap; }
+.sec-h h2 { font: 600 19px/1.2 var(--serif); }
+.sec-h p { margin: 0; color: var(--muted); font-size: 13px; }
+.kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+@media (max-width: 1000px) { .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kpi { padding: 12px 14px; }
+.kpi .l { font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.kpi .v { font: 600 22px/1.15 var(--serif); margin-top: 4px; }
+.kpi .d { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.pill { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.p-good { background: var(--good-soft); color: var(--good); } .p-bad { background: var(--bad-soft); color: var(--bad); } .p-warn { background: var(--warn-soft); color: var(--warn); } .p-info { background: var(--info-soft); color: var(--info); } .p-neutral { background: var(--surface2); color: var(--muted); border: 1px solid var(--line); }
+.hero { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 26px; background: linear-gradient(135deg, var(--hero) 0%, var(--hero-2) 100%); color: var(--hero-ink); border-radius: 14px; padding: 22px 26px 20px; box-shadow: var(--shadow); }
+.hero-main, .hero-side { min-width: 0; }
+.eyebrow { font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--hero-muted); }
+.hero-num { font: 600 clamp(40px, 6.4vw, 64px)/1.02 var(--serif); letter-spacing: -.02em; margin-top: 6px; }
+.hero-sub { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; font-size: 13.5px; color: var(--hero-muted); }
+.hero-sub b { color: var(--hero-ink); font-weight: 600; }
+.delta { font-weight: 600; font-size: 12.5px; padding: 3px 10px; border-radius: 999px; background: var(--hero-rule); color: var(--hero-ink); }
+.rangebar { position: relative; height: 34px; margin-top: 18px; }
+.rangebar .r90 { position: absolute; top: 11px; height: 12px; background: var(--hero-rule); border-radius: 6px; }
+.rangebar .r68 { position: absolute; top: 11px; height: 12px; background: rgba(227,182,100,.45); border-radius: 6px; }
+.rangebar .mk { position: absolute; top: 3px; width: 2px; height: 28px; background: var(--hero-line); }
+.rangebar .sp { position: absolute; top: 5px; width: 0; height: 24px; border-left: 2px dashed var(--hero-ink); }
+.range-lab { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--hero-muted); flex-wrap: wrap; }
+.hero-note { margin: 10px 0 0; font-size: 12px; color: var(--hero-muted); }
+.hero-side { display: flex; flex-direction: column; gap: 8px; border-left: 1px solid var(--hero-rule); padding-left: 24px; }
+.hero-side h4 { font: 600 15px/1.3 var(--serif); }
+.prob { display: grid; grid-template-columns: 74px minmax(0, 1fr) 40px; gap: 10px; align-items: center; font-size: 13px; }
+.prob .bar { height: 8px; border-radius: 4px; background: var(--hero-rule); overflow: hidden; }
+.prob .bar > i { display: block; height: 100%; background: var(--hero-line); }
+.prob .k { color: var(--hero-muted); } .prob .k.res { color: var(--hero-neg); } .prob .k.sup { color: var(--hero-pos); }
+@media (max-width: 900px) { .hero { grid-template-columns: minmax(0, 1fr); } .hero-side { border-left: 0; padding-left: 0; border-top: 1px solid var(--hero-rule); padding-top: 14px; } }
+@media (max-width: 620px) { .hero { padding: 18px 16px; } }
+.tw { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--surface2); white-space: nowrap; }
+td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+.r { text-align: right; } .nw { white-space: nowrap; } .mut { color: var(--muted); }
+.chart-box { position: relative; height: 260px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.seg button { border: 0; background: transparent; padding: 4px 10px; font-size: 12px; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.log { display: grid; gap: 0; max-height: 300px; overflow: auto; }
+.log > div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.log > div:first-child { border-top: 0; }
+.log .t { color: var(--muted); font-size: 12px; } .log .chg { font-weight: 600; }
+.banner { border: 1px solid var(--line); border-left: 4px solid var(--warn); background: var(--surface); border-radius: 8px; padding: 12px 14px; font-size: 13px; margin-bottom: 14px; }
+.banner.bad { border-left-color: var(--bad); } .banner.info { border-left-color: var(--info); }
+.empty { padding: 40px 18px; text-align: center; color: var(--muted); }
+.note { color: var(--muted); font-size: 12.5px; }
+.method p { margin: 0 0 10px; max-width: 72ch; } .method h3 { margin: 14px 0 6px; }
+footer { color: var(--muted); font-size: 12px; padding-block: 18px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+<header class="mast">
+  <div class="wrap">
+    <div class="mast-top">
+      <div class="brand"><h1>F&amp;O Expiry Desk</h1><span id="asof">Nifty weekly · Nifty monthly · Bank Nifty monthly</span></div>
+      <div class="sp"></div>
+      <span class="chip" id="status">Connecting to Kite…</span>
+      <button class="chip" id="refresh" title="Fetch the option chain again from Kite">↻ Refresh</button>
+      <button class="icon-btn" id="theme" aria-label="Change theme" title="Theme: system / dark / light">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </div>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Contracts"></nav>
+  </div>
+</header>
+<main class="wrap">
+  <div id="banner"></div>
+  <div id="view"><div class="card empty">Fetching the live option chain from your Kite connector. The first time, Claude asks you to allow Kite for this page.</div></div>
+  <footer>Personal research view, read-only on Kite: it never places orders. Predictions are ranges, not targets; the 68% range should contain the settlement about two times in three. Not investment advice.</footer>
+</main>
+
+<script>
+/*ENGINE-START*/
+const UNDERLYINGS = [
+  { name: 'NIFTY', label: 'Nifty', spot: 'NSE:NIFTY 50', token: 256265, step: 50, kinds: ['weekly', 'monthly'], thr: 0.003 },
+  { name: 'BANKNIFTY', label: 'Bank Nifty', spot: 'NSE:NIFTY BANK', token: 260105, step: 100, kinds: ['monthly'], thr: 0.004 },
+];
+const VIX = 'NSE:INDIA VIX';
+const SLOTS = ['09:45', '12:30', '15:05'];
+const SIGNALS = ['forward', 'max_pain', 'wall_centre', 'gamma_pin', 'pcr', 'momentum', 'pivot'];
+const PRIOR = {
+  gt5: { forward: .60, max_pain: .10, wall_centre: .10, gamma_pin: .05, pcr: .05, momentum: .05, pivot: .05 },
+  '2to5': { forward: .45, max_pain: .15, wall_centre: .15, gamma_pin: .10, pcr: .05, momentum: .05, pivot: .05 },
+  le1: { forward: .35, max_pain: .20, wall_centre: .20, gamma_pin: .15, pcr: .05, momentum: .025, pivot: .025 },
+};
+const PRIOR_K = { k68: 1.0, k90: 1.645 };
+
+// IST clock: Date shifted by +5:30 and read with getUTC*.
+const IST_MS = 5.5 * 3600e3;
+function ist(ms = Date.now()) {
+  const d = new Date(ms + IST_MS), p = n => String(n).padStart(2, '0');
+  return { ms, date: `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`, hm: `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`, dow: d.getUTCDay() };
+}
+function closeMs(dateStr) { const [y, m, d] = dateStr.split('-').map(Number); return Date.UTC(y, m - 1, d, 10, 0); } // 15:30 IST
+function yearFrac(nowMs, expiry) { return Math.max((closeMs(expiry) - nowMs) / (365 * 864e5), 1 / (365 * 1440)); }
+function isLive(expiry, now) { return expiry > now.date || (expiry === now.date && now.hm < '15:30'); }
+function dteBucket(today, expiry) {
+  let n = 0; const d = new Date(today + 'T00:00:00Z'); const end = new Date(expiry + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 1);
+  while (d <= end) { const w = d.getUTCDay(); if (w > 0 && w < 6) n++; d.setUTCDate(d.getUTCDate() + 1); }
+  return n <= 1 ? 'le1' : n <= 5 ? '2to5' : 'gt5';
+}
+
+const ncdf = x => 0.5 * (1 + erf(x / Math.SQRT2));
+const npdf = x => Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+function erf(x) { // Abramowitz-Stegun 7.1.26, |err| < 1.5e-7
+  const s = x < 0 ? -1 : 1; x = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * x);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return s * y;
+}
+function b76(F, K, T, iv, type) {
+  const s = iv * Math.sqrt(T), d1 = (Math.log(F / K) + 0.5 * s * s) / s, d2 = d1 - s;
+  return type === 'CE' ? F * ncdf(d1) - K * ncdf(d2) : K * ncdf(-d2) - F * ncdf(-d1);
+}
+function impliedVol(price, F, K, T, type) {
+  const intrinsic = type === 'CE' ? Math.max(0, F - K) : Math.max(0, K - F);
+  if (!(price > 0) || price < intrinsic - 1e-9 || T <= 0) return null;
+  let lo = 0.01, hi = 3.0;
+  if (price > b76(F, K, T, hi, type) || price < b76(F, K, T, lo, type)) return null;
+  for (let i = 0; i < 100 && hi - lo > 1e-6; i++) { const m = (lo + hi) / 2; if (b76(F, K, T, m, type) > price) hi = m; else lo = m; }
+  return (lo + hi) / 2;
+}
+function gammaOf(F, K, T, iv) { const s = iv * Math.sqrt(T), d1 = (Math.log(F / K) + 0.5 * s * s) / s; return npdf(d1) / (F * iv * Math.sqrt(T)); }
+const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+function optPrice(o) {
+  if (o.bid > 0 && o.ask > 0) { const mid = (o.bid + o.ask) / 2; if (o.ask - o.bid <= 0.2 * mid) return mid; }
+  return o.ltp || 0;
+}
+
+// snap: {expiry, futExpiry, takenMs, spot, future, options:[{strike,type,ltp,bid,ask,oi}]}
+function computeSignals(snap, oiPrev, prevHLC, close3) {
+  const T = yearFrac(snap.takenMs, snap.expiry), Tf = yearFrac(snap.takenMs, snap.futExpiry);
+  const fwd = snap.expiry === snap.futExpiry ? snap.future : snap.spot + (snap.future - snap.spot) * T / Tf;
+  const ce = new Map(), pe = new Map();
+  for (const o of snap.options) (o.type === 'CE' ? ce : pe).set(o.strike, o.oi);
+  const strikes = [...new Set([...ce.keys(), ...pe.keys()])].sort((a, b) => a - b);
+  let maxPain = null, best = Infinity;
+  for (const K of strikes) {
+    let pay = 0;
+    for (const [k, oi] of ce) pay += oi * Math.max(0, K - k);
+    for (const [k, oi] of pe) pay += oi * Math.max(0, k - K);
+    if (pay < best - 1e-9 || (Math.abs(pay - best) <= 1e-9 && Math.abs(K - fwd) < Math.abs(maxPain - fwd))) { best = pay; maxPain = K; }
+  }
+  const supports = [...pe].filter(([k]) => k < snap.spot).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]);
+  const resistances = [...ce].filter(([k]) => k > snap.spot).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]);
+  let wallCentre = null;
+  if (supports.length && resistances.length) { const ps = pe.get(supports[0]), cs = ce.get(resistances[0]); if (ps + cs > 0) wallCentre = (supports[0] * ps + resistances[0] * cs) / (ps + cs); }
+  const sum = m => [...m.values()].reduce((a, b) => a + b, 0);
+  const pcrTotal = sum(ce) ? sum(pe) / sum(ce) : null;
+  const near = [...strikes].sort((a, b) => Math.abs(a - fwd) - Math.abs(b - fwd)).slice(0, 11);
+  const nce = near.reduce((a, k) => a + (ce.get(k) || 0), 0), npe = near.reduce((a, k) => a + (pe.get(k) || 0), 0);
+  const pcrAtm = nce ? npe / nce : null;
+  const ivAt = new Map(); let nIv = 0;
+  for (const o of snap.options) {
+    const iv = impliedVol(optPrice(o), fwd, o.strike, T, o.type);
+    if (iv != null) { nIv++; if (!ivAt.has(o.strike)) ivAt.set(o.strike, []); ivAt.get(o.strike).push(iv); }
+  }
+  let atmIv = null;
+  if (ivAt.size) { const k = [...ivAt.keys()].sort((a, b) => Math.abs(a - fwd) - Math.abs(b - fwd))[0]; const v = ivAt.get(k); atmIv = v.reduce((a, b) => a + b, 0) / v.length; }
+  const sigma = atmIv ? fwd * atmIv * Math.sqrt(T) : null;
+  let gammaPin = null;
+  if (sigma) {
+    let g0 = -1;
+    for (const k of strikes) {
+      if (Math.abs(k - fwd) > 2 * sigma) continue;
+      const v = ivAt.get(k), ivk = v ? v.reduce((a, b) => a + b, 0) / v.length : atmIv;
+      const g = ((ce.get(k) || 0) + (pe.get(k) || 0)) * gammaOf(fwd, k, T, ivk);
+      if (g > g0) { g0 = g; gammaPin = k; }
+    }
+  }
+  const pivot = prevHLC ? (prevHLC[0] + prevHLC[1] + prevHLC[2]) / 3 : null;
+  const momentum = close3 ? snap.spot / close3 - 1 : null;
+  const oiChange = {};
+  for (const o of snap.options) { const key = o.strike + '|' + o.type; if (oiPrev && key in oiPrev) oiChange[key] = o.oi - oiPrev[key]; }
+  const centres = { forward: fwd };
+  if (maxPain != null) centres.max_pain = maxPain;
+  if (wallCentre != null) centres.wall_centre = wallCentre;
+  if (gammaPin != null) centres.gamma_pin = gammaPin;
+  if (sigma && pcrAtm != null) centres.pcr = fwd + clamp(pcrAtm - 1, -0.5, 0.5) * 0.5 * sigma;
+  if (sigma && momentum != null) centres.momentum = clamp(fwd * (1 + 0.5 * momentum), fwd - sigma, fwd + sigma);
+  if (pivot != null) centres.pivot = pivot;
+  return { forward: fwd, maxPain, supports, resistances, wallCentre, pcrTotal, pcrAtm, atmIv, sigma, gammaPin, pivot, momentum, oiChange, centres,
+    quality: atmIv == null || nIv < 5 ? 'low' : 'ok' };
+}
+
+function predict(sig, ws, bucket) {
+  let used = Object.entries(ws.weights).filter(([k, w]) => k in sig.centres && w > 0);
+  if (!used.length) used = [['forward', 1]];
+  const tot = used.reduce((a, [, w]) => a + w, 0), weights = Object.fromEntries(used.map(([k, w]) => [k, w / tot]));
+  const centre = Object.entries(weights).reduce((a, [k, w]) => a + w * sig.centres[k], 0);
+  const notes = []; let band68 = null, band90 = null; const probs = {};
+  if (sig.sigma) {
+    band68 = [centre - ws.k68 * sig.sigma, centre + ws.k68 * sig.sigma];
+    band90 = [centre - ws.k90 * sig.sigma, centre + ws.k90 * sig.sigma];
+    const keys = new Set([...sig.supports, ...sig.resistances]); if (sig.maxPain != null) keys.add(sig.maxPain);
+    for (const k of [...keys].sort((a, b) => a - b)) probs[k] = 1 - ncdf((k - centre) / (ws.k68 * sig.sigma));
+  } else notes.push('no implied volatility, so the range is unavailable');
+  if (ws.source === 'prior') notes.push('uncalibrated');
+  if (sig.quality === 'low') notes.push('low data quality');
+  return { centre, band68, band90, probs, weights, version: ws.version, source: ws.source, bucket, note: notes.join('; ') };
+}
+
+const fmt = x => x == null || !isFinite(x) ? '—' : Math.round(x).toLocaleString('en-IN');
+function compare(prev, cur, thr) {
+  if (!prev) return [true, 'first prediction of the series'];
+  const ps = prev.supports[0], cs = cur.supports[0], pr = prev.resistances[0], cr = cur.resistances[0];
+  const moved = Math.abs(cur.centre - prev.centre) / prev.centre > thr;
+  if (!moved && ps === cs && pr === cr) return [false, 'no material change'];
+  const items = [];
+  if (Math.round(cur.centre) !== Math.round(prev.centre)) items.push(`centre ${fmt(prev.centre)} → ${fmt(cur.centre)}`);
+  if (ps !== cs) items.push(`put wall ${fmt(ps)} → ${fmt(cs)}`);
+  if (pr !== cr) items.push(`call wall ${fmt(pr)} → ${fmt(cr)}`);
+  if (prev.pcrAtm != null && cur.pcrAtm != null && Math.abs(cur.pcrAtm - prev.pcrAtm) >= 0.05) items.push(`PCR ${prev.pcrAtm.toFixed(2)} → ${cur.pcrAtm.toFixed(2)}`);
+  return [true, items.join('; ')];
+}
+
+// learning: rows = [{expiry, bucket, centre, sigma, settlement, errPct, in68, in90, signalErrs:{name:pct}, fwdErrPct}]
+function scoreLocks(locks, settlement) {
+  const pct = p => (p - settlement) / settlement * 100;
+  return locks.map(l => ({ expiry: l.expiry, kind: l.kind, madeAt: l.madeAt, bucket: l.bucket, centre: l.centre, sigma: l.sigma, settlement,
+    errPct: pct(l.centre), in68: l.band68 ? settlement >= l.band68[0] && settlement <= l.band68[1] : null,
+    in90: l.band90 ? settlement >= l.band90[0] && settlement <= l.band90[1] : null,
+    signalErrs: Object.fromEntries(Object.entries(l.centres || {}).map(([k, c]) => [k, pct(c)])), fwdErrPct: pct(l.forward) }));
+}
+function percentile(xs, q) { xs = [...xs].sort((a, b) => a - b); if (xs.length === 1) return xs[0]; const p = q * (xs.length - 1), lo = Math.floor(p), hi = Math.min(lo + 1, xs.length - 1); return xs[lo] + (xs[hi] - xs[lo]) * (p - lo); }
+function refit(rows, prior, lam = 10) {
+  const n = new Set(rows.map(r => r.expiry)).size, a = n + lam > 0 ? n / (n + lam) : 0;
+  const sq = {};
+  for (const r of rows) for (const [k, e] of Object.entries(r.signalErrs)) (sq[k] = sq[k] || []).push(e * e);
+  const inv = Object.fromEntries(Object.entries(sq).map(([k, v]) => [k, 1 / (v.reduce((x, y) => x + y, 0) / v.length + 0.01)]));
+  const w = { ...prior.weights }; for (const k in inv) if (!(k in w)) w[k] = 0;
+  const mass = Object.keys(inv).reduce((s, k) => s + (prior.weights[k] || 0), 0);
+  if (Object.keys(inv).length && mass > 0) {
+    const tot = Object.values(inv).reduce((x, y) => x + y, 0);
+    for (const k in inv) w[k] = mass * (a * inv[k] / tot + (1 - a) * (prior.weights[k] || 0) / mass);
+  }
+  const s = Object.values(w).reduce((x, y) => x + y, 0);
+  const weights = s > 0 ? Object.fromEntries(Object.entries(w).filter(([, v]) => v > 0).map(([k, v]) => [k, v / s])) : { ...prior.weights };
+  let { k68, k90 } = prior; const z = rows.filter(r => r.sigma).map(r => Math.abs(r.settlement - r.centre) / r.sigma);
+  if (z.length >= 5) { k68 = a * percentile(z, .68) + (1 - a) * prior.k68; k90 = a * percentile(z, .90) + (1 - a) * prior.k90; }
+  return { weights, k68, k90 };
+}
+function trackRecord(rows) {
+  if (!rows.length) return null;
+  const n = rows.length, mae = rows.reduce((a, r) => a + Math.abs(r.errPct), 0) / n, fmae = rows.reduce((a, r) => a + Math.abs(r.fwdErrPct), 0) / n;
+  const b68 = rows.filter(r => r.in68 != null), b90 = rows.filter(r => r.in90 != null);
+  return { expiries: new Set(rows.map(r => r.expiry)).size, n, mae, fmae, w05: rows.filter(r => Math.abs(r.errPct) <= .5).length / n,
+    w1: rows.filter(r => Math.abs(r.errPct) <= 1).length / n, cov68: b68.length ? b68.filter(r => r.in68).length / b68.length : null,
+    cov90: b90.length ? b90.filter(r => r.in90).length / b90.length : null, beats: mae < fmae };
+}
+/*ENGINE-END*/
+
+// ---------- connector + store
+const S = { mcp: null, db: null, panels: {}, locks: {}, outcomes: {}, weights: {}, tab: 'NIFTY-weekly', oiMode: {}, charts: {}, busy: false, err: null, dataMs: null };
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+async function kite(args) {
+  const r = await S.mcp.callTool('Kite', 'market', args, { cache: false });
+  const p = r && (r.payload ?? r);
+  return p && p.data !== undefined ? p.data : p;
+}
+const ERR_COPY = {
+  server_not_connected: 'The Kite connector is not connected to your Claude account. Add it in claude.ai Settings → Connectors, then press Refresh.',
+  needs_reauth: 'Your Kite login has expired (it lasts until 06:00 each day). Reconnect Kite in claude.ai Settings → Connectors, then press Refresh.',
+  consent_required: 'This page needs your permission to use Kite. Allow it from the artifact’s Permissions menu, then press Refresh.',
+  not_in_manifest: 'This page needs your permission to use Kite. Allow it from the artifact’s Permissions menu, then press Refresh.',
+  selection_required: 'Choose which Kite connector to use when Claude asks, then press Refresh.',
+  blocked_by_policy: 'Your organization’s policy blocks this page from using Kite.',
+  approval_required: 'Using Kite from this page needs your approval. Open the artifact in claude.ai and allow it.',
+};
+function errText(e) {
+  const code = (e && e.code) || 'error';
+  if (ERR_COPY[code]) return ERR_COPY[code];
+  if (code === 'tool_error') { const m = (e.message || '').toLowerCase(); if (m.includes('login') || m.includes('token') || m.includes('session')) return 'Kite says your session has expired. Ask Claude to log you in to Kite again (or reconnect the connector), then press Refresh.'; return 'Kite reported an error: ' + (e.message || 'unknown'); }
+  if (code === 'server_unavailable' || code === 'upstream_error') return 'Kite did not answer just now. Press Refresh in a minute.';
+  return 'Could not reach Kite (' + code + '). Press Refresh to try again.';
+}
+
+async function dbAll(col) {
+  if (!S.db) return [];
+  try { const q = await S.db.collection(col).get(); return q.docs.map(d => ({ id: d.id, ...d.data() })); } catch (e) { return []; }
+}
+async function dbSet(path, body) { if (!S.db) return false; try { await S.db.doc(path).set(body); return true; } catch (e) { return false; } }
+
+async function loadStore() {
+  for (const d of await dbAll('latest')) S.panels[d.id] = d;
+  for (const d of await dbAll('locks')) S.locks[d.id] = d;
+  for (const d of await dbAll('outcomes')) S.outcomes[d.id] = d;
+  for (const d of await dbAll('weights')) S.weights[d.id] = d;
+  for (const d of await dbAll('scores')) (S.scores = S.scores || {})[d.id] = d;
+}
+function weightSet(name, bucket) {
+  const w = S.weights[`${name}-${bucket}`];
+  return w ? { weights: w.weights, k68: w.k68, k90: w.k90, version: w.version, source: w.source } : { weights: PRIOR[bucket], ...PRIOR_K, version: 'uncalibrated', source: 'prior' };
+}
+
+// ---------- fetch one underlying's live chain(s)
+function parseQuote(q) {
+  const b = q && q.depth && q.depth.buy && q.depth.buy[0] ? q.depth.buy[0].price : 0, a = q && q.depth && q.depth.sell && q.depth.sell[0] ? q.depth.sell[0].price : 0;
+  return { ltp: +(q && q.last_price) || 0, bid: b || null, ask: a || null, oi: +(q && q.oi) || 0, ts: q && q.timestamp };
+}
+function candleRows(p) {
+  const arr = (p && (p.candles || p.data || p)) || [];
+  return (Array.isArray(arr) ? arr : []).map(c => Array.isArray(c) ? { date: String(c[0]).slice(0, 10), high: +c[2], low: +c[3], close: +c[4] } : { date: String(c.date).slice(0, 10), high: +c.high, low: +c.low, close: +c.close });
+}
+async function history(u, days) {
+  const now = ist(), from = ist(Date.now() - days * 864e5).date;
+  return candleRows(await kite({ mode: 'historical', instrument_token: u.token, interval: 'day', from_date: from, to_date: now.date }));
+}
+async function chainFor(u, expiry) {
+  const oc = await kite({ mode: 'option_chain', underlying: u.name, expiry, limit: 500 });
+  return { strikes: oc.strikes || [], future: oc.future || null, expiries: oc.expiries || [] };
+}
+async function refreshUnderlying(u, now) {
+  const base = await kite({ mode: 'option_chain', underlying: u.name, limit: 1 });
+  const live = (base.expiries || []).filter(e => isLive(e, now)).sort();
+  if (!live.length) throw { code: 'no_expiry', message: 'No live expiry found' };
+  const first = await chainFor(u, live[0]);
+  const futExp = first.future ? first.future.expiry_date : live[0];
+  const exps = {}; if (u.kinds.includes('weekly')) exps.weekly = live[0]; if (u.kinds.includes('monthly')) exps.monthly = futExp;
+  const head = await kite({ mode: 'quote', instruments: [u.spot, VIX, first.future.id] });
+  const spot = parseQuote(head[u.spot]).ltp, fut = parseQuote(head[first.future.id]).ltp, vix = head[VIX] ? parseQuote(head[VIX]).ltp : null;
+  const spotTs = head[u.spot] && head[u.spot].timestamp;
+  let hist = []; try { hist = await history(u, 12); } catch (e) { hist = []; }
+  const past = hist.filter(c => c.date < now.date);
+  const prevHLC = past.length ? [past[past.length - 1].high, past[past.length - 1].low, past[past.length - 1].close] : null;
+  const close3 = past.length >= 3 ? past[past.length - 3].close : null;
+  const lo = spot * 0.92, hi = spot * 1.08;
+  const chains = {};
+  for (const exp of new Set(Object.values(exps))) {
+    const ch = exp === live[0] ? first : await chainFor(u, exp);
+    const rows = ch.strikes.filter(s => s.strike >= lo && s.strike <= hi);
+    const ids = []; for (const s of rows) { if (s.call) ids.push(s.call.id); if (s.put) ids.push(s.put.id); }
+    const quotes = ids.length ? await kite({ mode: 'quote', instruments: ids.slice(0, 500) }) : {};
+    const options = [];
+    for (const s of rows) for (const [leg, type] of [['call', 'CE'], ['put', 'PE']]) if (s[leg] && quotes[s[leg].id]) options.push({ strike: +s.strike, type, ...parseQuote(quotes[s[leg].id]) });
+    chains[exp] = { expiry: exp, futExpiry: futExp, takenMs: Date.now(), spot, future: fut, options };
+  }
+  for (const kind of u.kinds) {
+    const exp = exps[kind], snap = chains[exp], key = `${u.name}-${kind}`;
+    const prevPanel = S.panels[key];
+    const oiPrev = prevPanel && prevPanel.expiry === exp && prevPanel.oiClose && prevPanel.oiCloseDate < now.date ? prevPanel.oiClose
+      : prevPanel && prevPanel.expiry === exp ? prevPanel.oiPrevClose || null : null;
+    const sig = computeSignals(snap, oiPrev, prevHLC, close3);
+    const bucket = dteBucket(now.date, exp);
+    const pred = predict(sig, weightSet(u.name, bucket), bucket);
+    const oiNow = Object.fromEntries(snap.options.map(o => [o.strike + '|' + o.type, o.oi]));
+    const strikes = [...new Set(snap.options.map(o => o.strike))].sort((a, b) => a - b).filter(k => k >= spot * 0.96 && k <= spot * 1.04);
+    const ce = Object.fromEntries(snap.options.filter(o => o.type === 'CE').map(o => [o.strike, o.oi])), pe = Object.fromEntries(snap.options.filter(o => o.type === 'PE').map(o => [o.strike, o.oi]));
+    const panel = {
+      key, underlying: u.name, label: u.label, kind, expiry: exp, futExpiry: futExp, dataMs: Date.now(), spotTs: spotTs ? String(spotTs) : null,
+      spot, future: fut, vix, bucket, signals: { forward: sig.forward, maxPain: sig.maxPain, supports: sig.supports, resistances: sig.resistances, wallCentre: sig.wallCentre,
+        pcrTotal: sig.pcrTotal, pcrAtm: sig.pcrAtm, atmIv: sig.atmIv, sigma: sig.sigma, gammaPin: sig.gammaPin, pivot: sig.pivot, momentum: sig.momentum, quality: sig.quality, centres: sig.centres },
+      pred, oi: { strikes, ce: strikes.map(k => ce[k] || 0), pe: strikes.map(k => pe[k] || 0), ceChg: strikes.map(k => sig.oiChange[k + '|CE'] ?? null), peChg: strikes.map(k => sig.oiChange[k + '|PE'] ?? null) },
+      // keep the last close's OI so tomorrow can show the change since the previous close
+      oiPrevClose: oiPrev, oiClose: now.hm >= '15:30' ? oiNow : (prevPanel && prevPanel.expiry === exp ? prevPanel.oiClose || null : null),
+      oiCloseDate: now.hm >= '15:30' ? now.date : (prevPanel && prevPanel.expiry === exp ? prevPanel.oiCloseDate || null : null),
+    };
+    S.panels[key] = panel;
+    dbSet('latest/' + key, panel);
+    await maybeLock(u, panel, now);
+  }
+}
+
+// Lock a formal prediction at 09:45 / 12:30 / 15:05 if the page is open within 30 minutes of the slot. Missed slots are never back-filled.
+function slotDue(now) {
+  if (now.dow === 0 || now.dow === 6) return null;
+  const toMin = hm => +hm.slice(0, 2) * 60 + +hm.slice(3);
+  const m = toMin(now.hm);
+  for (const s of [...SLOTS].reverse()) if (m >= toMin(s) && m < toMin(s) + 30) return s;
+  return null;
+}
+async function maybeLock(u, p, now) {
+  const slot = slotDue(now); if (!slot || !p.pred) return;
+  const id = `${p.key}-${p.expiry}-${now.date}-${slot.replace(':', '')}`;
+  if (S.locks[id]) return;
+  const prior = Object.values(S.locks).filter(l => l.key === p.key && l.expiry === p.expiry).sort((a, b) => a.madeAt - b.madeAt).pop();
+  const cur = { centre: p.pred.centre, supports: p.signals.supports, resistances: p.signals.resistances, pcrAtm: p.signals.pcrAtm };
+  const [changed, reason] = compare(prior ? { centre: prior.centre, supports: prior.supports, resistances: prior.resistances, pcrAtm: prior.pcrAtm } : null, cur, u.thr);
+  const lock = { key: p.key, underlying: u.name, kind: p.kind, expiry: p.expiry, date: now.date, slot, madeAt: Date.now(), centre: p.pred.centre, band68: p.pred.band68, band90: p.pred.band90,
+    sigma: p.signals.sigma, forward: p.signals.forward, centres: p.signals.centres, supports: p.signals.supports, resistances: p.signals.resistances, pcrAtm: p.signals.pcrAtm,
+    bucket: p.bucket, version: p.pred.version, changed, reason, spot: p.spot };
+  S.locks[id] = lock; await dbSet('locks/' + id, lock);
+}
+
+// Settle expiries whose locked predictions have no outcome yet; then refit that index's weights.
+async function settle(now) {
+  for (const u of UNDERLYINGS) {
+    const due = [...new Set(Object.values(S.locks).filter(l => l.underlying === u.name && !isLive(l.expiry, now) && !S.outcomes[`${u.name}-${l.expiry}`]).map(l => l.expiry))];
+    if (!due.length) continue;
+    let hist; try { hist = await history(u, 40); } catch (e) { continue; }
+    for (const exp of due) {
+      const c = hist.find(h => h.date === exp); if (!c) continue;
+      const locks = Object.values(S.locks).filter(l => l.underlying === u.name && l.expiry === exp);
+      const rows = scoreLocks(locks, c.close);
+      S.outcomes[`${u.name}-${exp}`] = { underlying: u.name, expiry: exp, settlement: c.close };
+      await dbSet(`outcomes/${u.name}-${exp}`, S.outcomes[`${u.name}-${exp}`]);
+      S.scores = S.scores || {};
+      for (const [i, r] of rows.entries()) { const id = `${u.name}-${exp}-${i}`; S.scores[id] = { underlying: u.name, ...r }; await dbSet('scores/' + id, S.scores[id]); }
+      for (const bucket of new Set(rows.map(r => r.bucket))) {
+        const all = Object.values(S.scores).filter(r => r.underlying === u.name && r.bucket === bucket);
+        const recent = [...new Set(all.map(r => r.expiry))].sort().slice(-20);
+        const fit = refit(all.filter(r => recent.includes(r.expiry)), { weights: PRIOR[bucket], ...PRIOR_K });
+        const ws = { ...fit, version: 'live-' + now.date.replace(/-/g, ''), source: 'live', updatedMs: Date.now() };
+        S.weights[`${u.name}-${bucket}`] = ws; await dbSet(`weights/${u.name}-${bucket}`, ws);
+      }
+    }
+  }
+}
+
+async function refresh() {
+  if (S.busy) return; S.busy = true; $('#refresh').disabled = true; setStatus('Fetching from Kite…', '');
+  const now = ist(); S.err = null;
+  try {
+    for (const u of UNDERLYINGS) await refreshUnderlying(u, now);
+    await settle(now);
+    S.dataMs = Date.now();
+  } catch (e) { S.err = e; }
+  S.busy = false; $('#refresh').disabled = false; render();
+}
+
+// ---------- rendering
+const KIND = { weekly: 'weekly', monthly: 'monthly' };
+const BUCKET = { gt5: '6+ trading days', '2to5': '2–5 trading days', le1: 'expiry day / 1 day' };
+const NAMES = { forward: 'Futures-implied', max_pain: 'Max pain', wall_centre: 'OI walls', gamma_pin: 'Gamma pin', pcr: 'PCR tilt', momentum: 'Momentum', pivot: 'Pivot' };
+const pct = x => x == null ? '—' : Math.round(x * 100) + '%';
+function dlabel(d) { const dt = new Date(d + 'T00:00:00Z'); return dt.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }); }
+function tlabel(ms) { return new Date(ms).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }); }
+function dtlabel(ms) { return new Date(ms).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }); }
+function setStatus(text, cls) { const s = $('#status'); s.textContent = text; s.className = 'chip ' + (cls || ''); }
+function tabs() {
+  const list = [];
+  for (const u of UNDERLYINGS) for (const k of u.kinds) list.push([`${u.name}-${k}`, `${u.label} ${KIND[k]}`, S.panels[`${u.name}-${k}`]]);
+  list.push(['track', 'Track record'], ['method', 'How it works']);
+  $('#tabs').innerHTML = list.map(([id, l, p]) => `<button class="tab" role="tab" aria-selected="${S.tab === id}" data-t="${id}">${esc(l)}${p ? `<span class="n">${dlabel(p.expiry)}</span>` : ''}</button>`).join('');
+  $('#tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => { S.tab = b.dataset.t; render(); });
+}
+function render() {
+  tabs();
+  const now = ist(), market = now.dow > 0 && now.dow < 6 && now.hm >= '09:15' && now.hm <= '15:30';
+  if (S.err) setStatus(S.err.code === 'server_not_connected' || S.err.code === 'needs_reauth' ? 'Kite login needed' : 'Kite error', 'alert');
+  else if (S.dataMs) setStatus((market ? 'Kite ✔ live · ' : 'Market closed · ') + 'data ' + tlabel(S.dataMs) + ' IST', market ? 'live' : '');
+  $('#asof').textContent = S.dataMs ? 'Updated ' + dtlabel(S.dataMs) + ' IST · refreshes every 5 min while open in market hours' : 'Nifty weekly · Nifty monthly · Bank Nifty monthly';
+  $('#banner').innerHTML = S.err ? `<div class="banner bad">${esc(errText(S.err))}${Object.keys(S.panels).length ? ' Showing the last saved data below.' : ''}</div>` : '';
+  Object.values(S.charts).forEach(c => c.destroy()); S.charts = {};
+  const v = $('#view');
+  if (S.tab === 'track') { v.innerHTML = trackView(); return; }
+  if (S.tab === 'method') { v.innerHTML = methodView(); return; }
+  const p = S.panels[S.tab];
+  if (!p) { v.innerHTML = `<div class="card empty">${S.busy || !S.err ? 'Fetching the live option chain from Kite…' : 'No data yet for this contract. Press Refresh once Kite is connected.'}</div>`; return; }
+  v.innerHTML = panelView(p, now);
+  drawCharts(p);
+  const sg = v.querySelector('[data-oi]'); if (sg) sg.querySelectorAll('button').forEach(b => b.onclick = () => { S.oiMode[p.key] = b.dataset.m; render(); });
+}
+function panelView(p, now) {
+  const pr = p.pred, s = p.signals, stale = Date.now() - p.dataMs > 10 * 60e3 && now.hm >= '09:15' && now.hm <= '15:30' && now.dow > 0 && now.dow < 6;
+  const lo = pr.band90 ? pr.band90[0] - 0.15 * (pr.band90[1] - pr.band90[0]) : p.spot * 0.97, hi = pr.band90 ? pr.band90[1] + 0.15 * (pr.band90[1] - pr.band90[0]) : p.spot * 1.03;
+  const pos = x => clamp((x - lo) / (hi - lo) * 100, 0, 100);
+  const bar = pr.band68 ? `<div class="rangebar" aria-hidden="true">
+      <div class="r90" style="left:${pos(pr.band90[0])}%;width:${pos(pr.band90[1]) - pos(pr.band90[0])}%"></div>
+      <div class="r68" style="left:${pos(pr.band68[0])}%;width:${pos(pr.band68[1]) - pos(pr.band68[0])}%"></div>
+      <div class="mk" style="left:${pos(pr.centre)}%"></div><div class="sp" style="left:${pos(p.spot)}%" title="Spot"></div></div>
+      <div class="range-lab"><span>90%: ${fmt(pr.band90[0])} – ${fmt(pr.band90[1])}</span><span>gold mark = expected · dashed = spot ${fmt(p.spot)}</span></div>` : '';
+  const probs = Object.entries(pr.probs).map(([k, v]) => [+k, v]).sort((a, b) => b[0] - a[0]);
+  const locks = Object.values(S.locks).filter(l => l.key === p.key && l.expiry === p.expiry).sort((a, b) => b.madeAt - a.madeAt);
+  const delta = (pr.centre - p.spot) / p.spot * 100;
+  return `
+  ${stale ? `<div class="banner">This data is from ${tlabel(p.dataMs)} IST, more than 10 minutes old. Press Refresh.</div>` : ''}
+  <section class="hero">
+    <div class="hero-main">
+      <div class="eyebrow">${esc(p.label)} ${KIND[p.kind]} · expiry ${dlabel(p.expiry)} · ${BUCKET[p.bucket]}</div>
+      <div class="hero-num">${fmt(pr.centre)}</div>
+      <div class="hero-sub"><span>Expected settlement</span><span class="delta">${delta >= 0 ? '+' : ''}${delta.toFixed(2)}% vs spot</span>
+        ${pr.band68 ? `<span>68% range <b>${fmt(pr.band68[0])} – ${fmt(pr.band68[1])}</b></span>` : ''}</div>
+      ${bar}
+      <p class="hero-note">${pr.note ? esc(pr.note.charAt(0).toUpperCase() + pr.note.slice(1)) + '. ' : ''}Data ${tlabel(p.dataMs)} IST${p.spotTs ? '' : ''}. Weights: ${esc(pr.source === 'prior' ? 'starting guesses' : pr.source === 'live' ? 'learned from settled expiries' : pr.source)}.</p>
+    </div>
+    <div class="hero-side">
+      <h4>Chance of settling above</h4>
+      ${probs.length ? probs.map(([k, v]) => `<div class="prob"><span class="k ${s.resistances.includes(k) ? 'res' : s.supports.includes(k) ? 'sup' : ''}">${fmt(k)}</span><div class="bar"><i style="width:${Math.round(v * 100)}%"></i></div><span>${pct(v)}</span></div>`).join('') : '<p class="note" style="color:var(--hero-muted)">Not available without implied volatility.</p>'}
+      <span class="note" style="color:var(--hero-muted)">Green = put-OI support · red = call-OI resistance</span>
+    </div>
+  </section>
+  <div class="kpis">
+    ${kpi('Spot', fmt(p.spot), 'Futures ' + fmt(p.future))}
+    ${kpi('India VIX', p.vix == null ? '—' : p.vix.toFixed(2), '')}
+    ${kpi('Max pain', fmt(s.maxPain), 'Gamma pin ' + fmt(s.gammaPin))}
+    ${kpi('PCR near ATM', s.pcrAtm == null ? '—' : s.pcrAtm.toFixed(2), 'Total ' + (s.pcrTotal == null ? '—' : s.pcrTotal.toFixed(2)))}
+    ${kpi('ATM IV', s.atmIv == null ? '—' : (s.atmIv * 100).toFixed(1) + '%', '1σ to expiry ±' + fmt(s.sigma))}
+    ${kpi('Data quality', s.quality === 'ok' ? '<span class="pill p-good">OK</span>' : '<span class="pill p-warn">Low</span>', s.quality === 'ok' ? 'IV solved across the chain' : 'Few strikes priced')}
+  </div>
+  <div class="sec-h"><h2>Open interest</h2><p>Strikes within ±4% of spot. Dashed line marks spot.</p></div>
+  <div class="grid">
+    <div class="card s8"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <h3>${(S.oiMode[p.key] || 'oi') === 'oi' ? 'Open interest by strike' : 'Change since previous close'}</h3>
+      <span class="seg" data-oi><button data-m="oi" aria-pressed="${(S.oiMode[p.key] || 'oi') === 'oi'}">OI</button><button data-m="chg" aria-pressed="${S.oiMode[p.key] === 'chg'}">Change</button></span></div>
+      <div class="chart-box"><canvas id="oiChart" role="img" aria-label="Open interest by strike, calls and puts"></canvas></div>
+      ${S.oiMode[p.key] === 'chg' && p.oi.ceChg.every(x => x == null) ? '<p class="note">Change appears from the next trading day, once this page has seen a closing chain.</p>' : ''}</div>
+    <div class="card s4"><h3>Support and resistance</h3><div class="sub">Strongest open-interest walls</div>
+      <div class="tw"><table><thead><tr><th>Level</th><th class="r">Strike</th><th class="r">Distance</th></tr></thead><tbody>
+      ${s.resistances.map((k, i) => `<tr><td><span class="pill p-bad">Resistance ${i + 1}</span></td><td class="r">${fmt(k)}</td><td class="r">${((k - p.spot) / p.spot * 100).toFixed(2)}%</td></tr>`).join('')}
+      <tr><td><span class="pill p-neutral">Spot</span></td><td class="r">${fmt(p.spot)}</td><td class="r mut">—</td></tr>
+      ${s.supports.map((k, i) => `<tr><td><span class="pill p-good">Support ${i + 1}</span></td><td class="r">${fmt(k)}</td><td class="r">${((k - p.spot) / p.spot * 100).toFixed(2)}%</td></tr>`).join('')}
+      </tbody></table></div></div>
+  </div>
+  <div class="sec-h"><h2>Reassessments</h2><p>Locked at 09:45, 12:30 and 15:05 when this page is open within 30 minutes of the time.</p></div>
+  <div class="grid">
+    <div class="card s7"><h3>Prediction through the series</h3><div class="sub">Expected settlement and its 68% range at each locked reassessment</div>
+      ${locks.length ? '<div class="chart-box"><canvas id="driftChart" role="img" aria-label="Locked predictions over time"></canvas></div>' : '<p class="note">No locked reassessment yet for this expiry. Keep the page open at 09:45, 12:30 or 15:05 on a trading day.</p>'}</div>
+    <div class="card s5"><h3>Reassessment log</h3><div class="sub">Why the view changed</div>
+      <div class="log">${locks.length ? locks.map(l => `<div><span class="t">${dlabel(l.date)}<br>${l.slot}</span><span><b>${fmt(l.centre)}</b> · <span class="${l.changed ? 'chg' : 'mut'}">${esc(l.reason)}</span></span></div>`).join('') : '<p class="note">Nothing locked yet.</p>'}</div></div>
+    <div class="card s12"><h3>Signals behind this prediction</h3><div class="sub">Each signal's own estimate of the settlement and the weight it gets now (${esc(BUCKET[p.bucket])})</div>
+      <div class="tw"><table><thead><tr><th>Signal</th><th class="r">Estimate</th><th class="r">vs spot</th><th class="r">Weight</th></tr></thead><tbody>
+      ${SIGNALS.map(k => `<tr><td>${NAMES[k]}</td><td class="r">${fmt(s.centres[k])}</td><td class="r">${s.centres[k] == null ? '—' : ((s.centres[k] - p.spot) / p.spot * 100).toFixed(2) + '%'}</td><td class="r">${pr.weights[k] == null ? '<span class="mut">not used</span>' : pct(pr.weights[k])}</td></tr>`).join('')}
+      </tbody></table></div></div>
+  </div>`;
+}
+const kpi = (l, v, d) => `<div class="card kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="d">${d}</div></div>`;
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function drawCharts(p) {
+  if (typeof Chart === 'undefined') return;
+  const tick = css('--muted'), grid = css('--line'), mode = S.oiMode[p.key] || 'oi';
+  const base = { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { labels: { color: tick, boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y == null ? '—' : fmt(c.parsed.y)}` } } },
+    scales: { x: { grid: { display: false }, ticks: { color: tick, maxRotation: 0, autoSkipPadding: 8 } }, y: { grid: { color: grid }, border: { display: false }, ticks: { color: tick, callback: v => fmt(v) } } } };
+  const oc = document.getElementById('oiChart');
+  if (oc) {
+    const idx = p.oi.strikes.reduce((bi, k, i) => Math.abs(k - p.spot) < Math.abs(p.oi.strikes[bi] - p.spot) ? i : bi, 0);
+    const spotLine = { id: 'spotLine', afterDatasetsDraw(ch) { const x = ch.scales.x.getPixelForValue(idx), { top, bottom } = ch.chartArea, c = ch.ctx; c.save(); c.strokeStyle = tick; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(x, top); c.lineTo(x, bottom); c.stroke(); c.restore(); } };
+    S.charts.oi = new Chart(oc, { type: 'bar', plugins: [spotLine], data: { labels: p.oi.strikes.map(fmt), datasets: [
+      { label: 'Calls (CE)', data: mode === 'oi' ? p.oi.ce : p.oi.ceChg, backgroundColor: css('--ce'), borderRadius: 2, borderSkipped: 'start', categoryPercentage: .8, barPercentage: .9 },
+      { label: 'Puts (PE)', data: mode === 'oi' ? p.oi.pe : p.oi.peChg, backgroundColor: css('--pe'), borderRadius: 2, borderSkipped: 'start', categoryPercentage: .8, barPercentage: .9 }] }, options: base });
+  }
+  const dc = document.getElementById('driftChart');
+  if (dc) {
+    const L = Object.values(S.locks).filter(l => l.key === p.key && l.expiry === p.expiry).sort((a, b) => a.madeAt - b.madeAt);
+    const o = JSON.parse(JSON.stringify(base, (k, v) => typeof v === 'function' ? undefined : v));
+    o.plugins.tooltip = base.plugins.tooltip; o.scales.y.ticks.callback = v => fmt(v); o.plugins.legend.labels.filter = i => i.text !== '68% low';
+    S.charts.drift = new Chart(dc, { type: 'line', data: { labels: L.map(l => dlabel(l.date) + ' ' + l.slot), datasets: [
+      { label: '68% low', data: L.map(l => l.band68 ? l.band68[0] : null), borderWidth: 0, pointRadius: 0, fill: false },
+      { label: '68% range', data: L.map(l => l.band68 ? l.band68[1] : null), borderWidth: 0, pointRadius: 0, backgroundColor: css('--band68'), fill: '-1' },
+      { label: 'Expected settlement', data: L.map(l => l.centre), borderColor: css('--ce'), backgroundColor: css('--ce'), borderWidth: 2, pointRadius: 4 },
+      { label: 'Spot', data: L.map(l => l.spot), borderColor: css('--fwd'), borderDash: [5, 4], borderWidth: 2, pointRadius: 0 }] }, options: o });
+  }
+}
+function trackView() {
+  const out = [];
+  for (const u of UNDERLYINGS) {
+    const rows = Object.values(S.scores || {}).filter(r => r.underlying === u.name);
+    const tr = trackRecord(rows);
+    const settled = Object.values(S.outcomes).filter(o => o.underlying === u.name).sort((a, b) => b.expiry.localeCompare(a.expiry)).slice(0, 12);
+    out.push(`<div class="sec-h"><h2>${u.label}</h2><p>${tr ? `${tr.expiries} settled expir${tr.expiries === 1 ? 'y' : 'ies'}, ${tr.n} locked predictions` : 'No settled expiry yet'}</p></div>`);
+    if (!tr) { out.push('<div class="card note">The record starts after the first expiry that had a locked prediction settles. Locks happen at 09:45, 12:30 and 15:05 while this page is open.</div>'); continue; }
+    out.push(`<div class="kpis">${kpi('Mean error', tr.mae.toFixed(2) + '%', 'Futures price: ' + tr.fmae.toFixed(2) + '%')}${kpi('Verdict', tr.beats ? '<span class="pill p-good">Beats futures</span>' : '<span class="pill p-bad">Not yet</span>', tr.beats ? 'Signals add value so far' : 'Lean on the futures price')}
+      ${kpi('Within ±0.5%', pct(tr.w05), '')}${kpi('Within ±1%', pct(tr.w1), '')}${kpi('68% range held', pct(tr.cov68), 'Target ~68%')}${kpi('90% range held', pct(tr.cov90), 'Target ~90%')}</div>`);
+    out.push(`<div class="card" style="margin-top:14px"><div class="tw"><table><thead><tr><th>Expiry</th><th class="r">Settled</th><th class="r">Last locked call</th><th class="r">Error</th><th>68% range</th></tr></thead><tbody>${settled.map(o => {
+      const l = Object.values(S.locks).filter(x => x.underlying === u.name && x.expiry === o.expiry).sort((a, b) => b.madeAt - a.madeAt)[0];
+      const e = l ? (l.centre - o.settlement) / o.settlement * 100 : null, hit = l && l.band68 ? o.settlement >= l.band68[0] && o.settlement <= l.band68[1] : null;
+      return `<tr><td>${dlabel(o.expiry)}</td><td class="r">${fmt(o.settlement)}</td><td class="r">${l ? fmt(l.centre) : '—'}</td><td class="r">${e == null ? '—' : e.toFixed(2) + '%'}</td><td>${hit == null ? '—' : hit ? '<span class="pill p-good">Held</span>' : '<span class="pill p-bad">Missed</span>'}</td></tr>`; }).join('')}</tbody></table></div></div>`);
+  }
+  out.push(`<div class="sec-h"><h2>Signal weights in use</h2><p>Starting guesses until expiries settle; then pulled toward what worked, 1/11th per expiry at most.</p></div><div class="card"><div class="tw"><table><thead><tr><th>Index · stage</th>${SIGNALS.map(k => `<th class="r">${NAMES[k]}</th>`).join('')}<th>Source</th></tr></thead><tbody>
+    ${UNDERLYINGS.flatMap(u => Object.keys(PRIOR).map(b => { const w = weightSet(u.name, b); return `<tr><td class="nw">${u.label} · ${BUCKET[b]}</td>${SIGNALS.map(k => `<td class="r">${w.weights[k] == null ? '—' : pct(w.weights[k])}</td>`).join('')}<td>${w.source === 'prior' ? 'starting guess' : 'learned'}</td></tr>`; })).join('')}</tbody></table></div></div>`);
+  return out.join('');
+}
+function methodView() {
+  return `<div class="card method"><h3 style="margin-top:0">What the expected settlement is</h3>
+  <p>A weighted blend of seven estimates of where the index will close on expiry day: the futures-implied level, max pain (the strike where option writers pay least), the centre of the strongest put and call open-interest walls, the strike with the most gamma, a tilt from the put/call ratio near the money, a small momentum drift and the previous day's pivot.</p>
+  <p>The 68% and 90% ranges come from at-the-money implied volatility, which is solved from live option prices because Kite does not provide it. Treat the centre as the middle of a range, not a target.</p>
+  <h3>Reassessments and learning</h3>
+  <p>While this page is open on a trading day it refreshes every 5 minutes and locks a formal prediction at 09:45, 12:30 and 15:05, recording why the view changed. A time it was not open for is skipped, never filled in afterwards.</p>
+  <p>After an expiry settles, every locked prediction is scored against the index close. Each signal's weight then moves toward the signals that erred least, by at most 1/11th per expiry, so one expiry cannot swing them. The track record compares the result with the plain futures price; if the signals are not beating it, the page says so.</p>
+  <h3>Data</h3>
+  <p>Everything comes from your Kite connector in claude.ai, read-only. When Kite's daily login lapses (06:00 each morning) the page says so; reconnect Kite and press Refresh.</p></div>`;
+}
+
+// ---------- theme + boot
+(function theme() {
+  const modes = ['system', 'dark', 'light']; let m = 'system';
+  try { m = localStorage.getItem('fo-theme') || 'system'; } catch (e) {}
+  const apply = () => { if (m === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', m); };
+  apply(); $('#theme').onclick = () => { m = modes[(modes.indexOf(m) + 1) % 3]; try { localStorage.setItem('fo-theme', m); } catch (e) {} apply(); render(); };
+})();
+$('#refresh').onclick = () => { if (S.mcp) refresh(); };
+render();
+(async function boot() {
+  const c = window.claude;
+  if (!c || typeof c.use !== 'function') { setStatus('Open in Claude', 'alert'); $('#banner').innerHTML = '<div class="banner bad">This dashboard reads Kite through Claude. Open it in the Claude app or at claude.ai.</div>'; return; }
+  const [mcp, db] = await Promise.all([c.use('mcp').catch(() => null), c.use('db').catch(() => null)]);
+  S.mcp = mcp; S.db = db;
+  if (db) { await loadStore(); render(); }
+  if (!mcp) { setStatus('Kite unavailable', 'alert'); $('#banner').innerHTML = '<div class="banner bad">Live Kite data is not available in this view. Open the artifact in claude.ai while signed in as its owner.</div>'; return; }
+  await refresh();
+  setInterval(() => { const n = ist(); if (n.dow > 0 && n.dow < 6 && n.hm >= '09:15' && n.hm <= '15:35' && !document.hidden) refresh(); }, 5 * 60e3);
+})();
+</script>
