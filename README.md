@@ -53,15 +53,12 @@ After installing Python (step 1 below), double-click **`demo.bat`**. The first t
 
 ## Calibrate once with the back-test (recommended)
 
-Until you run the back-test, predictions are labelled **"uncalibrated"** because the signal weights are starting guesses. The back-test downloads NSE's daily F&O files and fits the weights on every past expiry. The current file format starts on 08-Jul-2024. Run it from the repository folder:
+Until you run the back-test, predictions are labelled **"uncalibrated"** because the signal weights are starting guesses. The back-test downloads NSE's daily F&O files since 08-Jul-2024 and fits the weights on every past expiry.
 
-```
-.venv\Scripts\python -m fo_dash backtest --from 2024-07-08 --to 2026-11-19
-```
-
-- **Time:** it downloads about 600 files at one per second (~10 minutes). The files are cached in `data\bhavcopy`, so re-runs are quick.
+**Double-click `backtest.bat`** and leave the window open.
+- **Time:** about 10–15 minutes the first time. The files are cached in `data\bhavcopy`, so re-runs are quick.
 - **Output:** a summary per index, showing the mean error vs the futures price and how often the 68% and 90% ranges held.
-- **Afterwards:** the dashboard label changes to **"back-test prior"**.
+- **Afterwards:** the dashboard label changes to **"back-test prior"**. The dashboard can stay open while it runs.
 - **Pivot levels are learned only from live expiries.** NSE's files don't contain the index's daily high and low, so the back-test can't test them.
 
 ## Reading the dashboard
@@ -78,7 +75,7 @@ Until you run the back-test, predictions are labelled **"uncalibrated"** because
 |---|---|
 | `start.bat` (= `.venv\Scripts\python -m fo_dash run`) | Scheduler + dashboard |
 | `demo.bat` (double-click) | Offline demo with sample data, no Kite needed; runs setup first if needed |
-| `.venv\Scripts\python -m fo_dash backtest --from … --to …` | Fit weights on NSE history |
+| `backtest.bat` (double-click) | Fit weights on NSE history, 08-Jul-2024 to today |
 | `.venv\Scripts\python -m fo_dash status` | Login state and which weights are in use |
 
 ## Where your data lives
@@ -96,7 +93,7 @@ Everything is stored in the `data\` folder:
 2. `start.bat` opens the dashboard. Before you log in, the status bar is red and says "Kite login needed".
 3. **"Log in to Kite"** returns you to the dashboard, and the status bar shows "Kite ✔ live".
 4. Within 5 minutes during market hours, all three panels show spot, futures and VIX matching Kite.
-5. The back-test command completes, and the label changes to "back-test prior".
+5. `backtest.bat` completes, and the label changes to "back-test prior".
 
 ## Development
 

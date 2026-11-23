@@ -51,13 +51,22 @@ def cmd_run(args) -> int:
 
 def cmd_backtest(args) -> int:
     import requests
-    from fo_dash.backtest.run import run_backtest
+    from fo_dash.backtest import run as bt
     from fo_dash.storage import Store
     s = load_settings()
     store = Store(s.data_dir / "fo_dash.sqlite")
-    start, end = date.fromisoformat(args.from_), date.fromisoformat(args.to)
-    print(f"Back-test {start} → {end}: downloading NSE bhavcopies (cached in {s.data_dir / 'bhavcopy'}) …")
-    rep = run_backtest(store, start, end, s.data_dir / "bhavcopy", requests.Session())
+    start = date.fromisoformat(args.from_)
+    end = date.fromisoformat(args.to) if args.to else _now().date()
+    print(f"Back-test {start} → {end}: downloading NSE daily files (cached in {s.data_dir / 'bhavcopy'}).")
+    print("First run takes about 10-15 minutes. Re-runs are quick.")
+    months: set[str] = set()
+
+    def progress(d: date) -> None:
+        if f"{d:%Y-%m}" not in months:
+            months.add(f"{d:%Y-%m}")
+            print(f"  {d:%b %Y} …", flush=True)
+
+    rep = bt.run_backtest(store, start, end, s.data_dir / "bhavcopy", requests.Session(), progress_fn=progress)
     print(f"Trading days used: {rep['days']}   holidays/missing: {rep['skipped_days']}")
     for name, tr in rep["track_record"].items():
         if not tr["expiries"]:
@@ -93,8 +102,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--demo", action="store_true", help="offline demo data, no Kite login")
     r.set_defaults(fn=cmd_run)
     b = sub.add_parser("backtest", help="fit prior weights on NSE bhavcopy history")
-    b.add_argument("--from", dest="from_", required=True, help="YYYY-MM-DD (UDiFF files start 2024-07-08)")
-    b.add_argument("--to", required=True, help="YYYY-MM-DD")
+    b.add_argument("--from", dest="from_", default="2024-07-08", help="YYYY-MM-DD (default 2024-07-08, when NSE's current file format starts)")
+    b.add_argument("--to", default=None, help="YYYY-MM-DD (default today)")
     b.set_defaults(fn=cmd_backtest)
     st = sub.add_parser("status", help="show login state and which weights are in use")
     st.set_defaults(fn=cmd_status)

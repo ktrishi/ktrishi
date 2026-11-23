@@ -38,7 +38,8 @@ def build_eod_snapshots(rows: list[BhavRow], cfg: UnderlyingConfig, kind: str) -
                           spot, futs[0].close, None, sorted(opts, key=lambda o: (o.strike, o.opt_type)))]
 
 
-def run_backtest(store, start: date, end: date, cache_dir: Path, session, sleep_fn=_time.sleep) -> dict:
+def run_backtest(store, start: date, end: date, cache_dir: Path, session, sleep_fn=_time.sleep,
+                 progress_fn=None) -> dict:
     names = {c.name for c in UNDERLYINGS}
     closes: dict[str, list[float]] = {n: [] for n in names}
     prev_oi: dict[tuple[str, date], dict] = {}
@@ -50,6 +51,8 @@ def run_backtest(store, start: date, end: date, cache_dir: Path, session, sleep_
         if d.weekday() >= 5:
             d += timedelta(days=1)
             continue
+        if progress_fn:
+            progress_fn(d)
         cached = (Path(cache_dir) / f"BhavCopy_NSE_FO_0_0_0_{d:%Y%m%d}_F_0000.csv.zip").exists()
         path = download(d, cache_dir, session)
         if not cached:

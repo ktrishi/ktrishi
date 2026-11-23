@@ -83,3 +83,13 @@ def test_download_uses_cache(tmp_path):
     write_fixture_as_daily_zips(FIXTURES / "bhavcopy_sample.csv", tmp_path)
     s = FakeSession(status=500)
     assert download(date(2026, 11, 19), tmp_path, s).exists() and s.calls == []
+
+
+def test_run_backtest_reports_progress(tmp_path, store):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_fixture_as_daily_zips(FIXTURES / "bhavcopy_sample.csv", cache)
+    days = []
+    run_backtest(store, date(2026, 11, 19), date(2026, 11, 23), cache, session=OfflineSession(),
+                 sleep_fn=lambda s: None, progress_fn=days.append)
+    assert days == [date(2026, 11, 19), date(2026, 11, 20), date(2026, 11, 23)]

@@ -10,9 +10,24 @@ def test_cli_help_lists_commands(capsys):
     assert all(c in out for c in ("run", "backtest", "status"))
 
 
-def test_backtest_requires_dates():
-    with pytest.raises(SystemExit):
-        main(["backtest"])
+def test_backtest_defaults_to_full_history_until_today(monkeypatch, tmp_path):
+    import fo_dash.backtest.run as run
+    from datetime import date
+    seen = {}
+
+    def fake(store, start, end, cache_dir, session, progress_fn=None):
+        seen.update(start=start, end=end)
+        return {"days": 0, "skipped_days": 0, "expiries": {}, "track_record": {}}
+    monkeypatch.setattr(run, "run_backtest", fake)
+    monkeypatch.setenv("FO_DATA_DIR", str(tmp_path))
+    assert main(["backtest"]) == 0
+    assert seen["start"] == date(2024, 7, 8) and seen["end"] >= date(2026, 11, 19)
+
+
+def test_backtest_bat_runs_setup_then_backtest():
+    from pathlib import Path
+    bat = (Path(__file__).parent.parent / "backtest.bat").read_bytes().decode()
+    assert "\r\n" in bat and "call setup.bat" in bat and "-m fo_dash backtest" in bat and "pause" in bat
 
 
 def test_demo_seeds_three_panels():
