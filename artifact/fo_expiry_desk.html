@@ -343,7 +343,8 @@ function errText(e) {
   if (ERR_COPY[code]) return ERR_COPY[code];
   if (code === 'tool_error') { const m = (e.message || '').toLowerCase(); if (m.includes('login') || m.includes('token') || m.includes('session')) return 'Kite says your session has expired. Ask Claude to log you in to Kite again (or reconnect the connector), then press Refresh.'; return 'Kite reported an error: ' + (e.message || 'unknown'); }
   if (code === 'server_unavailable' || code === 'upstream_error') return 'Kite did not answer just now. Press Refresh in a minute.';
-  return 'Could not reach Kite (' + code + '). Press Refresh to try again.';
+  if (code === 'error' || code === 'no_future' || code === 'no_quote') return 'Could not build ' + (e.where || 'the dashboard') + ': ' + (e.message || 'unknown problem') + '. Press Refresh; if it repeats, send Claude this message.';
+  return 'Could not reach Kite (' + code + (e.message ? ': ' + e.message : '') + '). Press Refresh to try again.';
 }
 
 async function dbAll(col) {
@@ -385,11 +386,17 @@ async function refreshUnderlying(u, now) {
   const base = await kite({ mode: 'option_chain', underlying: u.name, limit: 1 });
   const live = (base.expiries || []).filter(e => isLive(e, now)).sort();
   if (!live.length) throw { code: 'no_expiry', message: 'No live expiry found' };
-  const first = await chainFor(u, live[0]);
-  const futExp = first.future ? first.future.expiry_date : live[0];
-  const exps = {}; if (u.kinds.includes('weekly')) exps.weekly = live[0]; if (u.kinds.includes('monthly')) exps.monthly = futExp;
-  const head = await kite({ mode: 'quote', instruments: [u.spot, VIX, first.future.id] });
-  const spot = parseQuote(head[u.spot]).ltp, fut = parseQuote(head[first.future.id]).ltp, vix = head[VIX] ? parseQuote(head[VIX]).ltp : null;
+  // Weekly chains come back with future = null, so find the monthly (it carries the future): the last expiry in the
+  // nearest live month, falling back to scanning the live expiries in order.
+  let monthly = live.filter(e => e.slice(0, 7) === live[0].slice(0, 7)).pop();
+  let mch = await chainFor(u, monthly);
+  if (!mch.future) for (const e of live) { const c = await chainFor(u, e); if (c.future) { monthly = e; mch = c; break; } }
+  if (!mch.future) throw { code: 'no_future', message: 'Kite returned no futures contract for ' + u.label };
+  const futExp = mch.future.expiry_date || monthly, futId = mch.future.id;
+  const exps = {}; if (u.kinds.includes('weekly')) exps.weekly = live[0]; if (u.kinds.includes('monthly')) exps.monthly = monthly;
+  const head = await kite({ mode: 'quote', instruments: [u.spot, VIX, futId] });
+  if (!head[u.spot] || !head[futId]) throw { code: 'no_quote', message: 'Kite returned no quote for ' + u.label + ' spot or futures' };
+  const spot = parseQuote(head[u.spot]).ltp, fut = parseQuote(head[futId]).ltp, vix = head[VIX] ? parseQuote(head[VIX]).ltp : null;
   const spotTs = head[u.spot] && head[u.spot].timestamp;
   let hist = []; try { hist = await history(u, 12); } catch (e) { hist = []; }
   const past = hist.filter(c => c.date < now.date);
@@ -398,7 +405,7 @@ async function refreshUnderlying(u, now) {
   const lo = spot * 0.92, hi = spot * 1.08;
   const chains = {};
   for (const exp of new Set(Object.values(exps))) {
-    const ch = exp === live[0] ? first : await chainFor(u, exp);
+    const ch = exp === monthly ? mch : await chainFor(u, exp);
     const rows = ch.strikes.filter(s => s.strike >= lo && s.strike <= hi);
     const ids = []; for (const s of rows) { if (s.call) ids.push(s.call.id); if (s.put) ids.push(s.put.id); }
     const quotes = ids.length ? await kite({ mode: 'quote', instruments: ids.slice(0, 500) }) : {};
@@ -481,11 +488,11 @@ async function settle(now) {
 async function refresh() {
   if (S.busy) return; S.busy = true; $('#refresh').disabled = true; setStatus('Fetching from Kite…', '');
   const now = ist(); S.err = null;
-  try {
-    for (const u of UNDERLYINGS) await refreshUnderlying(u, now);
-    await settle(now);
-    S.dataMs = Date.now();
-  } catch (e) { S.err = e; }
+  let ok = 0;
+  for (const u of UNDERLYINGS) {
+    try { await refreshUnderlying(u, now); ok++; } catch (e) { if (!S.err) S.err = Object.assign({ where: u.label }, e && typeof e === 'object' ? { code: e.code, message: e.message } : { message: String(e) }); }
+  }
+  if (ok) { try { await settle(now); } catch (e) { /* settlement retries on the next refresh */ } S.dataMs = Date.now(); }
   S.busy = false; $('#refresh').disabled = false; render();
 }
 
@@ -508,7 +515,7 @@ function tabs() {
 function render() {
   tabs();
   const now = ist(), market = now.dow > 0 && now.dow < 6 && now.hm >= '09:15' && now.hm <= '15:30';
-  if (S.err) setStatus(S.err.code === 'server_not_connected' || S.err.code === 'needs_reauth' ? 'Kite login needed' : 'Kite error', 'alert');
+  if (S.err) setStatus(S.err.code === 'server_not_connected' || S.err.code === 'needs_reauth' ? 'Kite login needed' : S.err.code && ERR_COPY[S.err.code] ? 'Kite permission needed' : 'Problem loading ' + (S.err.where || 'data'), 'alert');
   else if (S.dataMs) setStatus((market ? 'Kite ✔ live · ' : 'Market closed · ') + 'data ' + tlabel(S.dataMs) + ' IST', market ? 'live' : '');
   $('#asof').textContent = S.dataMs ? 'Updated ' + dtlabel(S.dataMs) + ' IST · refreshes every 5 min while open in market hours' : 'Nifty weekly · Nifty monthly · Bank Nifty monthly';
   $('#banner').innerHTML = S.err ? `<div class="banner bad">${esc(errText(S.err))}${Object.keys(S.panels).length ? ' Showing the last saved data below.' : ''}</div>` : '';
