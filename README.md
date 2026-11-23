@@ -25,11 +25,11 @@ A personal, **read-only** tool that runs on your Windows laptop. It reads the li
 
 ## Just want to look? Double-click `demo.bat`
 
-After installing Python 3.12 (step 1 below), double-click **`demo.bat`**. The first time, it installs everything (1–2 minutes), then opens the dashboard with sample data in your browser. No Kite keys or login needed. Close the black window to stop it.
+After installing Python (step 1 below), double-click **`demo.bat`**. The first time, it installs everything (1–2 minutes), then opens the dashboard with sample data in your browser. No Kite keys or login needed. Close the black window to stop it.
 
 ## First-time setup (once)
 
-1. **Install Python 3.12** from python.org. On the first installer screen, tick **"Add python.exe to PATH"**.
+1. **Install Python 3.14** (3.12 or newer works) from python.org/downloads/windows. On the first installer screen, tick **"Add python.exe to PATH"**.
 2. **Download this repository** to a folder, e.g. `C:\fo-dashboard`.
 3. **Run setup:** double-click **`setup.bat`**. It creates a private Python environment and installs the dependencies.
 4. **Add your Kite keys:**

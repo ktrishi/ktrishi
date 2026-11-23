@@ -29,3 +29,9 @@ def test_demo_bat_runs_setup_then_demo():
     from pathlib import Path
     bat = (Path(__file__).parent.parent / "demo.bat").read_bytes().decode()
     assert "\r\n" in bat and "call setup.bat" in bat and "-m fo_dash run --demo" in bat
+
+
+def test_setup_bat_accepts_newer_python():
+    from pathlib import Path
+    bat = (Path(__file__).parent.parent / "setup.bat").read_bytes().decode()
+    assert "py -3.14" in bat and "py -3.13" in bat and "version_info >= (3, 12)" in bat and "\r\n" in bat
