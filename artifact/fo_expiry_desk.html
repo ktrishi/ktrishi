@@ -9,7 +9,7 @@
   --band: #0e1a2e; --band-ink: #e9eef6; --band-muted: #9bb0cc; --accent: #9a6b1c; --focus: #2d5fa8;
   --good: #0b7a5a; --good-soft: #dff3ec; --bad: #b3322a; --bad-soft: #f8e1de; --warn: #a76a0b; --warn-soft: #f9ecd0; --info: #2f5d9e; --info-soft: #e0eaf7;
   --ce: #2a78d6; --pe: #eb6834; --band68: rgba(42,120,214,.16); --fwd: #6c7a89;
-  --hero: #12233f; --hero-2: #1b3358; --hero-ink: #f3f6fb; --hero-muted: #a9bbd4; --hero-line: #e3b664; --hero-rule: rgba(255,255,255,.12); --hero-pos: #7fe0bd; --hero-neg: #ffa69c;
+  --hero: #12233f; --hero-2: #1b3358; --hero-ink: #f3f6fb; --hero-muted: #a9bbd4; --hero-line: #e3b664; --drift: #5ad1e6; --hero-rule: rgba(255,255,255,.12); --hero-pos: #7fe0bd; --hero-neg: #ffa69c;
   --shadow: 0 1px 2px rgba(15,26,44,.06), 0 4px 14px rgba(15,26,44,.05);
   --serif: 'Newsreader', Georgia, 'Times New Roman', serif; --sans: 'Public Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
@@ -79,14 +79,19 @@ main { padding-block: 18px 40px; }
 .hero-sub { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; font-size: 13.5px; color: var(--hero-muted); }
 .hero-sub b { color: var(--hero-ink); font-weight: 600; }
 .delta { font-weight: 600; font-size: 12.5px; padding: 3px 10px; border-radius: 999px; background: var(--hero-rule); color: var(--hero-ink); }
-.scale { position: relative; height: 96px; margin-top: 14px; }
+.scale { position: relative; height: 108px; margin-top: 14px; }
 .scale .track { position: absolute; left: 0; right: 0; top: 40px; height: 14px; border-radius: 7px; background: var(--hero-rule); }
 .scale .b90 { position: absolute; top: 0; height: 100%; background: rgba(227,182,100,.25); border-radius: 7px; }
 .scale .b68 { position: absolute; top: 0; height: 100%; background: rgba(227,182,100,.6); border-radius: 7px; }
 .scale .pin { position: absolute; transform: translateX(-50%); text-align: center; font-size: 11.5px; line-height: 1.25; white-space: nowrap; color: var(--hero-muted); }
 .scale .pin b { color: var(--hero-ink); font-size: 13px; }
 .scale .pin.exp { top: 0; } .scale .pin.exp::after { content: ""; display: block; width: 2px; height: 12px; margin: 2px auto 0; background: var(--hero-line); }
-.scale .pin.spot { top: 40px; } .scale .pin.spot::before { content: ""; display: block; width: 0; height: 22px; margin: 0 auto 2px; border-left: 2px dashed var(--hero-ink); }
+.scale .pin.spot { top: 40px; } .scale .pin.spot::before { content: ""; display: block; width: 0; height: 28px; margin: 0 auto 2px; border-left: 2px dashed var(--hero-ink); }
+.scale .drift { position: absolute; top: 37px; height: 20px; border-radius: 10px; background: rgba(90,209,230,.35); border: 2px solid var(--drift); min-width: 10px; }
+.scale .dd { position: absolute; top: 43px; width: 8px; height: 8px; border-radius: 50%; background: var(--drift); transform: translateX(-50%); }
+.scale .dd.last { width: 12px; height: 12px; top: 41px; background: #fff; border: 2px solid var(--drift); }
+.drift-lab { margin-top: 6px; font-size: 12px; color: var(--hero-muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.drift-lab i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--drift); }
 .xchips { display: flex; gap: 6px 8px; flex-wrap: wrap; margin-top: 4px; }
 .xchip { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--hero-rule); color: var(--hero-ink); background: var(--hero-rule); }
 .xchip.hot { background: var(--hero-line); color: #1b2333; border-color: var(--hero-line); font-weight: 600; }
@@ -544,12 +549,20 @@ function panelView(p, now) {
   const lo = pr.band90 ? pr.band90[0] - 0.15 * (pr.band90[1] - pr.band90[0]) : p.spot * 0.97, hi = pr.band90 ? pr.band90[1] + 0.15 * (pr.band90[1] - pr.band90[0]) : p.spot * 1.03;
   const pos = x => clamp((x - lo) / (hi - lo) * 100, 0, 100);
   const pinPos = x => clamp(pos(x), 9, 91);
+  // history of the expected settlement for this expiry, from every locked call
+  const hist = Object.values(S.locks).filter(l => l.key === p.key && l.expiry === p.expiry && isFinite(l.centre)).sort((a, b) => a.madeAt - b.madeAt);
+  const hc = hist.map(l => l.centre), hmin = hc.length ? Math.min(...hc) : null, hmax = hc.length ? Math.max(...hc) : null;
+  const driftHtml = hc.length ? `<div class="drift" style="left:${pos(hmin)}%;width:${Math.max(0.6, pos(hmax) - pos(hmin))}%"></div>` +
+    hist.map((l, i) => `<i class="dd${i === hist.length - 1 ? ' last' : ''}" style="left:${pos(l.centre)}%" title="${dlabel(l.date)} ${l.slot}: ${fmt(l.centre)}"></i>`).join('') : '';
+  const driftLab = hc.length > 1 ? `<div class="drift-lab"><i></i><span>Expected settlement has moved between <b style="color:var(--hero-ink)">${fmt(hmin)}</b> and <b style="color:var(--hero-ink)">${fmt(hmax)}</b> over ${hc.length} locked calls (${fmt(hmax - hmin)} points). First ${fmt(hc[0])}, latest ${fmt(hc[hc.length - 1])}; the white dot is the latest.</span></div>`
+    : hc.length === 1 ? `<div class="drift-lab"><i></i><span>One locked call so far: ${fmt(hc[0])}. The blue band on the bar will show how far it moves.</span></div>` : '';
   const bar = pr.band68 ? `<div class="scale" role="img" aria-label="Expected ${fmt(pr.centre)}, spot ${fmt(p.spot)}, 68% range ${fmt(pr.band68[0])} to ${fmt(pr.band68[1])}">
       <div class="pin exp" style="left:${pinPos(pr.centre)}%">Expected <b>${fmt(pr.centre)}</b></div>
       <div class="track"><div class="b90" style="left:${pos(pr.band90[0])}%;width:${pos(pr.band90[1]) - pos(pr.band90[0])}%"></div>
         <div class="b68" style="left:${pos(pr.band68[0])}%;width:${pos(pr.band68[1]) - pos(pr.band68[0])}%"></div></div>
+      ${driftHtml}
       <div class="pin spot" style="left:${pinPos(p.spot)}%">Spot now <b>${fmt(p.spot)}</b></div></div>
-      <div class="range-lab"><span><b style="color:var(--hero-ink)">68%</b> range ${fmt(pr.band68[0])} – ${fmt(pr.band68[1])} (gold band)</span><span><b style="color:var(--hero-ink)">90%</b> range ${fmt(pr.band90[0])} – ${fmt(pr.band90[1])} (faint band)</span></div>` : '';
+      <div class="range-lab"><span><b style="color:var(--hero-ink)">68%</b> range ${fmt(pr.band68[0])} – ${fmt(pr.band68[1])} (gold band)</span><span><b style="color:var(--hero-ink)">90%</b> range ${fmt(pr.band90[0])} – ${fmt(pr.band90[1])} (faint band)</span></div>${driftLab}` : '';
   const tdl = (() => { let n = 0; const d = new Date(now.date + 'T00:00:00Z'), e = new Date(p.expiry + 'T00:00:00Z'); while (d < e) { d.setUTCDate(d.getUTCDate() + 1); const w = d.getUTCDay(); if (w > 0 && w < 6) n++; } return n; })();
   const probs = Object.entries(pr.probs).map(([k, v]) => [+k, v]).sort((a, b) => b[0] - a[0]);
   const locks = Object.values(S.locks).filter(l => l.key === p.key && l.expiry === p.expiry).sort((a, b) => b.madeAt - a.madeAt);
