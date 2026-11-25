@@ -3,6 +3,7 @@
 // Analyst CLI. Produces ArtifactData batch files (<=50 writes each) for the F&O Expiry Desk database.
 //   node analyst/run.js lock   --input input.json --state state.json --out DIR
 //   node analyst/run.js settle --state state.json --candles candles.json [--now MS] --out DIR
+//   node analyst/run.js state  --dir DUMPDIR [--versions versions.json] --out state.json
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadEngine, buildLock, DEFAULT_CONFIG } = require('./engine');
@@ -12,15 +13,23 @@ const HTML = path.join(__dirname, '..', 'artifact', 'fo_expiry_desk.html');
 const arg = n => { const i = process.argv.indexOf('--' + n); return i > 0 ? process.argv[i + 1] : undefined; };
 const readJson = p => JSON.parse(fs.readFileSync(p, 'utf8'));
 
+// Each document goes to its own JSON file; batch files hold only small {op, collection, doc_id, file_path, if_version}
+// entries, so the run can pass a batch to ArtifactData without copying the documents through the conversation.
 function writeBatches(out, writes) {
-  fs.mkdirSync(out, { recursive: true });
+  fs.mkdirSync(path.join(out, 'docs'), { recursive: true });
+  const entries = writes.map(e => {
+    const f = path.resolve(out, 'docs', `${e.collection}__${e.doc_id}.json`);
+    fs.writeFileSync(f, JSON.stringify(e.data));
+    const { data, ...rest } = e;
+    return { ...rest, file_path: f };
+  });
   const files = [];
-  for (let i = 0; i * 50 < writes.length; i++) {
+  for (let i = 0; i * 50 < entries.length; i++) {
     const f = path.join(out, `batch-${i + 1}.json`);
-    fs.writeFileSync(f, JSON.stringify(writes.slice(i * 50, i * 50 + 50), null, 1));
+    fs.writeFileSync(f, JSON.stringify(entries.slice(i * 50, i * 50 + 50)));
     files.push(f);
   }
-  console.log(`${writes.length} writes in ${files.length} batch file(s):\n${files.join('\n')}`);
+  console.log(`${entries.length} writes in ${files.length} batch file(s):\n${files.join('\n')}`);
 }
 function w(collection, doc_id, data, versions) {
   const e = { op: 'set', collection, doc_id, data };
@@ -93,8 +102,22 @@ function settleCmd() {
   writeBatches(arg('out'), writes);
 }
 
+// Assemble state.json from an ArtifactData out_dir dump (<dir>/<collection>/<doc_id>.json) plus versions.json.
+function stateCmd() {
+  const dir = arg('dir'), read = col => { const d = path.join(dir, col); return fs.existsSync(d) ? fs.readdirSync(d).filter(f => f.endsWith('.json')).map(f => ({ id: f.slice(0, -5), ...readJson(path.join(d, f)) })) : []; };
+  const byId = xs => Object.fromEntries(xs.map(x => [x.id, x]));
+  const cfg = read('config').find(x => x.id === 'model');
+  const state = {
+    config: cfg ? (({ id, ...c }) => c)(cfg) : undefined,
+    weights: byId(read('weights')), locks: read('locks'), outcomes: byId(read('outcomes')), scores: read('scores'), proposals: read('proposals'),
+    versions: arg('versions') && fs.existsSync(arg('versions')) ? readJson(arg('versions')) : {},
+  };
+  fs.writeFileSync(arg('out'), JSON.stringify(state));
+  console.log(`state: ${state.locks.length} locks, ${Object.keys(state.outcomes).length} outcomes, ${state.scores.length} scores, ${state.proposals.length} proposals, config ${cfg ? 'found' : 'default'}`);
+}
+
 try {
   const cmd = process.argv[2];
-  if (cmd === 'lock') lockCmd(); else if (cmd === 'settle') settleCmd();
+  if (cmd === 'lock') lockCmd(); else if (cmd === 'settle') settleCmd(); else if (cmd === 'state') stateCmd();
   else { console.error('usage: run.js lock|settle ...'); process.exit(2); }
 } catch (e) { console.error('ERROR: ' + e.message); process.exit(1); }

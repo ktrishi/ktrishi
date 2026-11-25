@@ -3,12 +3,9 @@
 const fs = require('node:fs');
 
 const EXPORTS = ['UNDERLYINGS', 'PRIOR', 'PRIOR_K', 'SIGNALS', 'ist', 'closeMs', 'yearFrac', 'isLive', 'dteBucket', 'ncdf', 'b76',
-  'impliedVol', 'computeSignals', 'predict', 'fmt', 'compare', 'scoreLocks', 'refit', 'trackRecord', 'percentile', 'clamp'];
+  'impliedVol', 'computeSignals', 'predict', 'fmt', 'compare', 'scoreLocks', 'refit', 'trackRecord', 'percentile', 'clamp', 'applyConfig', 'DEFAULT_CONFIG'];
 
-const DEFAULT_CONFIG = Object.freeze({
-  kScale: { NIFTY: 1, BANKNIFTY: 1 }, eventBandMax: 1.3, nudgeCapSigma: 0.25,
-  dropped: { NIFTY: [], BANKNIFTY: [] }, forwardFloor: { NIFTY: 0, BANKNIFTY: 0 },
-});
+const DEFAULT_HTML = require('node:path').join(__dirname, '..', 'artifact', 'fo_expiry_desk.html');
 
 let cached = null;
 function loadEngine(htmlPath) {
@@ -37,21 +34,8 @@ function validateChain(c) {
   if (Math.abs(c.future / c.spot - 1) > 0.03) throw new Error(`future ${c.future} is more than 3% from spot ${c.spot}`);
 }
 
-function applyConfig(ws, cfg, idx) {
-  cfg = cfg || DEFAULT_CONFIG;
-  const drop = new Set((cfg.dropped && cfg.dropped[idx]) || []);
-  let w = Object.fromEntries(Object.entries(ws.weights).filter(([k, v]) => !drop.has(k) && v > 0));
-  let tot = Object.values(w).reduce((a, b) => a + b, 0) || 1;
-  w = Object.fromEntries(Object.entries(w).map(([k, v]) => [k, v / tot]));
-  const floor = (cfg.forwardFloor && cfg.forwardFloor[idx]) || 0;
-  if (floor > 0 && (w.forward || 0) < floor) {
-    const rest = 1 - (w.forward || 0);
-    w = Object.fromEntries(Object.entries(w).map(([k, v]) => [k, k === 'forward' ? floor : rest > 0 ? v * (1 - floor) / rest : 0]));
-    if (!('forward' in w)) w.forward = floor;
-  }
-  const s = (cfg.kScale && cfg.kScale[idx]) || 1;
-  return { ...ws, weights: w, k68: ws.k68 * s, k90: ws.k90 * s };
-}
+// Config handling lives in the page's engine block too, so both apply approved changes identically.
+function applyConfig(ws, cfg, idx) { return loadEngine(DEFAULT_HTML).applyConfig(ws, cfg, idx); }
 
 function toSnap(c) {
   return { expiry: c.expiry, futExpiry: c.futExpiry, takenMs: c.takenMs, spot: c.spot, future: c.future,
@@ -59,8 +43,8 @@ function toSnap(c) {
 }
 
 function buildLock({ chain, nowMs, weights, cfg, overlay, events, prevLock, slot, htmlPath }) {
-  const eng = loadEngine(htmlPath || require('node:path').join(__dirname, '..', 'artifact', 'fo_expiry_desk.html'));
-  cfg = cfg || DEFAULT_CONFIG;
+  const eng = loadEngine(htmlPath || DEFAULT_HTML);
+  cfg = cfg || eng.DEFAULT_CONFIG;
   validateChain(chain);
   const now = eng.ist(nowMs);
   const sig = eng.computeSignals(toSnap(chain), chain.oiPrev || null, chain.prevHLC || null, chain.close3 || null);
@@ -91,4 +75,4 @@ function buildLock({ chain, nowMs, weights, cfg, overlay, events, prevLock, slot
   };
 }
 
-module.exports = { loadEngine, validateChain, applyConfig, buildLock, toSnap, DEFAULT_CONFIG };
+module.exports = { loadEngine, validateChain, applyConfig, buildLock, toSnap, get DEFAULT_CONFIG() { return JSON.parse(JSON.stringify(loadEngine(DEFAULT_HTML).DEFAULT_CONFIG)); } };

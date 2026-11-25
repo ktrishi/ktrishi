@@ -318,6 +318,22 @@ function trackRecord(rows) {
     w1: rows.filter(r => Math.abs(r.errPct) <= 1).length / n, cov68: b68.length ? b68.filter(r => r.in68).length / b68.length : null,
     cov90: b90.length ? b90.filter(r => r.in90).length / b90.length : null, beats: mae < fmae };
 }
+const DEFAULT_CONFIG = { kScale: { NIFTY: 1, BANKNIFTY: 1 }, eventBandMax: 1.3, nudgeCapSigma: 0.25, dropped: { NIFTY: [], BANKNIFTY: [] }, forwardFloor: { NIFTY: 0, BANKNIFTY: 0 } };
+function applyConfig(ws, cfg, idx) {
+  cfg = cfg || DEFAULT_CONFIG;
+  const drop = new Set((cfg.dropped && cfg.dropped[idx]) || []);
+  let w = Object.fromEntries(Object.entries(ws.weights).filter(([k, v]) => !drop.has(k) && v > 0));
+  const tot = Object.values(w).reduce((a, b) => a + b, 0) || 1;
+  w = Object.fromEntries(Object.entries(w).map(([k, v]) => [k, v / tot]));
+  const floor = (cfg.forwardFloor && cfg.forwardFloor[idx]) || 0;
+  if (floor > 0 && (w.forward || 0) < floor) {
+    const rest = 1 - (w.forward || 0);
+    w = Object.fromEntries(Object.entries(w).map(([k, v]) => [k, k === 'forward' ? floor : rest > 0 ? v * (1 - floor) / rest : 0]));
+    if (!('forward' in w)) w.forward = floor;
+  }
+  const sc = (cfg.kScale && cfg.kScale[idx]) || 1;
+  return { ...ws, weights: w, k68: ws.k68 * sc, k90: ws.k90 * sc };
+}
 /*ENGINE-END*/
 
 // ---------- connector + store
@@ -359,6 +375,13 @@ async function loadStore() {
   for (const d of await dbAll('outcomes')) S.outcomes[d.id] = d;
   for (const d of await dbAll('weights')) S.weights[d.id] = d;
   for (const d of await dbAll('scores')) (S.scores = S.scores || {})[d.id] = d;
+  S.postmortems = await dbAll('postmortems');
+  S.proposals = await dbAll('proposals');
+  S.runs = (await dbAll('runs')).sort((a, b) => (b.runMs || 0) - (a.runMs || 0));
+  if (S.db) {
+    try { const a = await S.db.doc('analyst/latest').get(); S.analyst = a.exists ? a.data() : null; } catch (e) { S.analyst = null; }
+    try { const c = await S.db.doc('config/model').get(); S.config = c.exists ? c.data() : null; } catch (e) { S.config = null; }
+  }
 }
 function weightSet(name, bucket) {
   const w = S.weights[`${name}-${bucket}`];
@@ -420,7 +443,7 @@ async function refreshUnderlying(u, now) {
       : prevPanel && prevPanel.expiry === exp ? prevPanel.oiPrevClose || null : null;
     const sig = computeSignals(snap, oiPrev, prevHLC, close3);
     const bucket = dteBucket(now.date, exp);
-    const pred = predict(sig, weightSet(u.name, bucket), bucket);
+    const pred = predict(sig, applyConfig(weightSet(u.name, bucket), S.config, u.name), bucket);
     const oiNow = Object.fromEntries(snap.options.map(o => [o.strike + '|' + o.type, o.oi]));
     const strikes = [...new Set(snap.options.map(o => o.strike))].sort((a, b) => a - b).filter(k => k >= spot * 0.96 && k <= spot * 1.04);
     const ce = Object.fromEntries(snap.options.filter(o => o.type === 'CE').map(o => [o.strike, o.oi])), pe = Object.fromEntries(snap.options.filter(o => o.type === 'PE').map(o => [o.strike, o.oi]));
@@ -435,53 +458,6 @@ async function refreshUnderlying(u, now) {
     };
     S.panels[key] = panel;
     dbSet('latest/' + key, panel);
-    await maybeLock(u, panel, now);
-  }
-}
-
-// Lock a formal prediction at 09:45 / 12:30 / 15:05 if the page is open within 30 minutes of the slot. Missed slots are never back-filled.
-function slotDue(now) {
-  if (now.dow === 0 || now.dow === 6) return null;
-  const toMin = hm => +hm.slice(0, 2) * 60 + +hm.slice(3);
-  const m = toMin(now.hm);
-  for (const s of [...SLOTS].reverse()) if (m >= toMin(s) && m < toMin(s) + 30) return s;
-  return null;
-}
-async function maybeLock(u, p, now) {
-  const slot = slotDue(now); if (!slot || !p.pred) return;
-  const id = `${p.key}-${p.expiry}-${now.date}-${slot.replace(':', '')}`;
-  if (S.locks[id]) return;
-  const prior = Object.values(S.locks).filter(l => l.key === p.key && l.expiry === p.expiry).sort((a, b) => a.madeAt - b.madeAt).pop();
-  const cur = { centre: p.pred.centre, supports: p.signals.supports, resistances: p.signals.resistances, pcrAtm: p.signals.pcrAtm };
-  const [changed, reason] = compare(prior ? { centre: prior.centre, supports: prior.supports, resistances: prior.resistances, pcrAtm: prior.pcrAtm } : null, cur, u.thr);
-  const lock = { key: p.key, underlying: u.name, kind: p.kind, expiry: p.expiry, date: now.date, slot, madeAt: Date.now(), centre: p.pred.centre, band68: p.pred.band68, band90: p.pred.band90,
-    sigma: p.signals.sigma, forward: p.signals.forward, centres: p.signals.centres, supports: p.signals.supports, resistances: p.signals.resistances, pcrAtm: p.signals.pcrAtm,
-    bucket: p.bucket, version: p.pred.version, changed, reason, spot: p.spot };
-  S.locks[id] = lock; await dbSet('locks/' + id, lock);
-}
-
-// Settle expiries whose locked predictions have no outcome yet; then refit that index's weights.
-async function settle(now) {
-  for (const u of UNDERLYINGS) {
-    const due = [...new Set(Object.values(S.locks).filter(l => l.underlying === u.name && !isLive(l.expiry, now) && !S.outcomes[`${u.name}-${l.expiry}`]).map(l => l.expiry))];
-    if (!due.length) continue;
-    let hist; try { hist = await history(u, 40); } catch (e) { continue; }
-    for (const exp of due) {
-      const c = hist.find(h => h.date === exp); if (!c) continue;
-      const locks = Object.values(S.locks).filter(l => l.underlying === u.name && l.expiry === exp);
-      const rows = scoreLocks(locks, c.close);
-      S.outcomes[`${u.name}-${exp}`] = { underlying: u.name, expiry: exp, settlement: c.close };
-      await dbSet(`outcomes/${u.name}-${exp}`, S.outcomes[`${u.name}-${exp}`]);
-      S.scores = S.scores || {};
-      for (const [i, r] of rows.entries()) { const id = `${u.name}-${exp}-${i}`; S.scores[id] = { underlying: u.name, ...r }; await dbSet('scores/' + id, S.scores[id]); }
-      for (const bucket of new Set(rows.map(r => r.bucket))) {
-        const all = Object.values(S.scores).filter(r => r.underlying === u.name && r.bucket === bucket);
-        const recent = [...new Set(all.map(r => r.expiry))].sort().slice(-20);
-        const fit = refit(all.filter(r => recent.includes(r.expiry)), { weights: PRIOR[bucket], ...PRIOR_K });
-        const ws = { ...fit, version: 'live-' + now.date.replace(/-/g, ''), source: 'live', updatedMs: Date.now() };
-        S.weights[`${u.name}-${bucket}`] = ws; await dbSet(`weights/${u.name}-${bucket}`, ws);
-      }
-    }
   }
 }
 
@@ -492,7 +468,7 @@ async function refresh() {
   for (const u of UNDERLYINGS) {
     try { await refreshUnderlying(u, now); ok++; } catch (e) { if (!S.err) S.err = Object.assign({ where: u.label }, e && typeof e === 'object' ? { code: e.code, message: e.message } : { message: String(e) }); }
   }
-  if (ok) { try { await settle(now); } catch (e) { /* settlement retries on the next refresh */ } S.dataMs = Date.now(); }
+  if (ok) S.dataMs = Date.now();
   S.busy = false; $('#refresh').disabled = false; render();
 }
 
@@ -508,7 +484,8 @@ function setStatus(text, cls) { const s = $('#status'); s.textContent = text; s.
 function tabs() {
   const list = [];
   for (const u of UNDERLYINGS) for (const k of u.kinds) list.push([`${u.name}-${k}`, `${u.label} ${KIND[k]}`, S.panels[`${u.name}-${k}`]]);
-  list.push(['track', 'Track record'], ['method', 'How it works']);
+  const pend = (S.proposals || []).filter(p => p.status === 'pending').length;
+  list.push(['analyst', 'Analyst'], ['track', 'Track record'], ['pm', 'Post-mortems'], ['props', 'Proposals' + (pend ? ' (' + pend + ')' : '')], ['method', 'How it works']);
   $('#tabs').innerHTML = list.map(([id, l, p]) => `<button class="tab" role="tab" aria-selected="${S.tab === id}" data-t="${id}">${esc(l)}${p ? `<span class="n">${dlabel(p.expiry)}</span>` : ''}</button>`).join('');
   $('#tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => { S.tab = b.dataset.t; render(); });
 }
@@ -521,7 +498,10 @@ function render() {
   $('#banner').innerHTML = S.err ? `<div class="banner bad">${esc(errText(S.err))}${Object.keys(S.panels).length ? ' Showing the last saved data below.' : ''}</div>` : '';
   Object.values(S.charts).forEach(c => c.destroy()); S.charts = {};
   const v = $('#view');
-  if (S.tab === 'track') { v.innerHTML = trackView(); return; }
+  if (S.tab === 'track') { v.innerHTML = trackView(); drawTrack(); return; }
+  if (S.tab === 'analyst') { v.innerHTML = analystView(); return; }
+  if (S.tab === 'pm') { v.innerHTML = pmView(); return; }
+  if (S.tab === 'props') { v.innerHTML = propView(); v.querySelectorAll('[data-dec]').forEach(b => b.onclick = () => decide(b.dataset.id, b.dataset.dec)); return; }
   if (S.tab === 'method') { v.innerHTML = methodView(); return; }
   const p = S.panels[S.tab];
   if (!p) { v.innerHTML = `<div class="card empty">${S.busy || !S.err ? 'Fetching the live option chain from Kite…' : 'No data yet for this contract. Press Refresh once Kite is connected.'}</div>`; return; }
@@ -530,7 +510,7 @@ function render() {
   const sg = v.querySelector('[data-oi]'); if (sg) sg.querySelectorAll('button').forEach(b => b.onclick = () => { S.oiMode[p.key] = b.dataset.m; render(); });
 }
 function panelView(p, now) {
-  const pr = p.pred, s = p.signals, stale = Date.now() - p.dataMs > 10 * 60e3 && now.hm >= '09:15' && now.hm <= '15:30' && now.dow > 0 && now.dow < 6;
+  const pr = withOverlay(p), s = p.signals, stale = Date.now() - p.dataMs > 10 * 60e3 && now.hm >= '09:15' && now.hm <= '15:30' && now.dow > 0 && now.dow < 6;
   const lo = pr.band90 ? pr.band90[0] - 0.15 * (pr.band90[1] - pr.band90[0]) : p.spot * 0.97, hi = pr.band90 ? pr.band90[1] + 0.15 * (pr.band90[1] - pr.band90[0]) : p.spot * 1.03;
   const pos = x => clamp((x - lo) / (hi - lo) * 100, 0, 100);
   const bar = pr.band68 ? `<div class="rangebar" aria-hidden="true">
@@ -550,6 +530,7 @@ function panelView(p, now) {
       <div class="hero-sub"><span>Expected settlement</span><span class="delta">${delta >= 0 ? '+' : ''}${delta.toFixed(2)}% vs spot</span>
         ${pr.band68 ? `<span>68% range <b>${fmt(pr.band68[0])} – ${fmt(pr.band68[1])}</b></span>` : ''}</div>
       ${bar}
+      ${ovNote(pr)}
       <p class="hero-note">${pr.note ? esc(pr.note.charAt(0).toUpperCase() + pr.note.slice(1)) + '. ' : ''}Data ${tlabel(p.dataMs)} IST${p.spotTs ? '' : ''}. Weights: ${esc(pr.source === 'prior' ? 'starting guesses' : pr.source === 'live' ? 'learned from settled expiries' : pr.source)}.</p>
     </div>
     <div class="hero-side">
@@ -580,10 +561,10 @@ function panelView(p, now) {
       ${s.supports.map((k, i) => `<tr><td><span class="pill p-good">Support ${i + 1}</span></td><td class="r">${fmt(k)}</td><td class="r">${((k - p.spot) / p.spot * 100).toFixed(2)}%</td></tr>`).join('')}
       </tbody></table></div></div>
   </div>
-  <div class="sec-h"><h2>Reassessments</h2><p>Locked at 09:45, 12:30 and 15:05 when this page is open within 30 minutes of the time.</p></div>
+  <div class="sec-h"><h2>Reassessments</h2><p>Locked by the scheduled analyst at 09:40 and 14:45 on trading days.</p></div>
   <div class="grid">
     <div class="card s7"><h3>Prediction through the series</h3><div class="sub">Expected settlement and its 68% range at each locked reassessment</div>
-      ${locks.length ? '<div class="chart-box"><canvas id="driftChart" role="img" aria-label="Locked predictions over time"></canvas></div>' : '<p class="note">No locked reassessment yet for this expiry. Keep the page open at 09:45, 12:30 or 15:05 on a trading day.</p>'}</div>
+      ${locks.length ? '<div class="chart-box"><canvas id="driftChart" role="img" aria-label="Locked predictions over time"></canvas></div>' : '<p class="note">No locked reassessment yet for this expiry. The analyst locks one at 09:40 and 14:45 on trading days.</p>'}</div>
     <div class="card s5"><h3>Reassessment log</h3><div class="sub">Why the view changed</div>
       <div class="log">${locks.length ? locks.map(l => `<div><span class="t">${dlabel(l.date)}<br>${l.slot}</span><span><b>${fmt(l.centre)}</b> · <span class="${l.changed ? 'chg' : 'mut'}">${esc(l.reason)}</span></span></div>`).join('') : '<p class="note">Nothing locked yet.</p>'}</div></div>
     <div class="card s12"><h3>Signals behind this prediction</h3><div class="sub">Each signal's own estimate of the settlement and the weight it gets now (${esc(BUCKET[p.bucket])})</div>
@@ -620,34 +601,123 @@ function drawCharts(p) {
       { label: 'Spot', data: L.map(l => l.spot), borderColor: css('--fwd'), borderDash: [5, 4], borderWidth: 2, pointRadius: 0 }] }, options: o });
   }
 }
+// ---------- analyst overlay, track record, post-mortems, proposals
+function analystOverlay(p) { const o = S.analyst && S.analyst.overlays && S.analyst.overlays[p.key]; return o && o.expiry === p.expiry ? o : null; }
+function withOverlay(p) {
+  const pr = p.pred, o = analystOverlay(p), sg = p.signals.sigma, cfg = S.config || DEFAULT_CONFIG;
+  if (!o || !sg || !pr.band68) return { ...pr, modelCentre: pr.centre, ov: null };
+  const nudge = clamp(+o.nudgeSigma || 0, -cfg.nudgeCapSigma, cfg.nudgeCapSigma), bm = clamp(+o.bandMult || 1, 1, cfg.eventBandMax);
+  const centre = pr.centre + nudge * sg, h68 = (pr.band68[1] - pr.band68[0]) / 2 * bm, h90 = (pr.band90[1] - pr.band90[0]) / 2 * bm;
+  const probs = Object.fromEntries(Object.keys(pr.probs).map(k => [k, 1 - ncdf((+k - centre) / h68)]));
+  return { ...pr, centre, band68: [centre - h68, centre + h68], band90: [centre - h90, centre + h90], probs, modelCentre: pr.centre, ov: { ...o, nudge, bm } };
+}
+function ovNote(pr) {
+  if (!pr.ov) return '';
+  const r = (pr.ov.reasons || []).join(' · ');
+  return `<p class="hero-note">Analyst overlay (${S.analyst.runMs ? dtlabel(S.analyst.runMs) + ' IST' : 'latest run'}): range ×${pr.ov.bm.toFixed(2)}, centre ${pr.ov.nudge >= 0 ? '+' : ''}${pr.ov.nudge.toFixed(2)}σ${r ? ' — ' + esc(r) : ''}. Model alone: ${fmt(pr.modelCentre)}.</p>`;
+}
+const MISS = { in_range: ['In range', 'p-good'], event_shock: ['Event shock', 'p-bad'], trend_breakout: ['Trend breakout', 'p-bad'], vol_surprise: ['Bigger move than priced', 'p-bad'],
+  vol_overpriced: ['Smaller move, centre off', 'p-warn'], other_miss: ['Miss, no pattern', 'p-warn'], no_range: ['No range', 'p-neutral'] };
+const missPill = m => { const x = MISS[m] || [m, 'p-neutral']; return `<span class="pill ${x[1]}">${esc(x[0])}</span>`; };
+function lastLockPerExpiry(idx) {
+  const m = new Map();
+  for (const l of Object.values(S.locks).filter(l => l.underlying === idx).sort((a, b) => a.madeAt - b.madeAt)) m.set(l.expiry, l);
+  return m;
+}
+function analystView() {
+  const a = S.analyst, last = (S.runs || [])[0];
+  const runLine = last ? `${last.status === 'ok' ? '<span class="pill p-good">OK</span>' : '<span class="pill p-bad">' + esc(last.status || 'error') + '</span>'} ${esc(last.kind || '')} run at ${dtlabel(last.runMs)} IST${last.error ? ' — ' + esc(last.error) : ''}` : 'No analyst run yet.';
+  const evs = (a && a.events) || [];
+  const ov = a && a.overlays ? Object.entries(a.overlays) : [];
+  return `<div class="grid">
+    <div class="card s12"><h3>Last analyst run</h3><div class="sub">Scheduled at 09:40 and 14:45 IST on trading days. It reads Kite, the NSE market feed and the news, then locks a prediction.</div><p style="margin:0">${runLine}</p>
+      ${last && last.status !== 'ok' && /login|auth|token/i.test(last.error || '') ? '<div class="banner bad" style="margin:10px 0 0">The Kite connection has lapsed. Reconnect Kite in claude.ai Settings → Connectors; the next run picks it up.</div>' : ''}
+      ${a && a.notes ? `<div class="banner info" style="margin:12px 0 0">${esc(a.notes)}</div>` : ''}</div>
+    <div class="card s7"><h3>Events that can move the market</h3><div class="sub">From the analyst's news search; high-impact events widen the range</div>
+      ${evs.length ? `<div class="tw"><table><thead><tr><th>When</th><th>Event</th><th>Impact</th></tr></thead><tbody>${evs.map(e => `<tr><td class="nw">${esc(e.when || '—')}</td><td>${esc(e.title)}${e.source ? `<small class="mut" style="display:block">${esc(e.source)}</small>` : ''}</td><td><span class="pill ${e.impact === 'high' ? 'p-bad' : e.impact === 'medium' ? 'p-warn' : 'p-neutral'}">${esc(e.impact || 'low')}</span></td></tr>`).join('')}</tbody></table></div>` : '<p class="note">No events recorded yet.</p>'}</div>
+    <div class="card s5"><h3>Overlay applied</h3><div class="sub">How the analyst adjusted the model, within its limits</div>
+      ${ov.length ? `<div class="tw"><table><thead><tr><th>Contract</th><th class="r">Model</th><th class="r">Final</th><th class="r">Range ×</th></tr></thead><tbody>${ov.map(([k, o]) => `<tr><td class="nw">${esc(k.replace('-', ' '))}<small class="mut" style="display:block">${dlabel(o.expiry)}</small></td><td class="r">${fmt(o.modelCentre)}</td><td class="r">${fmt(o.centre)}</td><td class="r">${(+o.bandMult || 1).toFixed(2)}</td></tr><tr><td colspan="4" class="note">${esc((o.reasons || []).join(' · ') || 'No adjustment.')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="note">Appears after the first analyst run.</p>'}</div>
+  </div>`;
+}
 function trackView() {
   const out = [];
   for (const u of UNDERLYINGS) {
-    const rows = Object.values(S.scores || {}).filter(r => r.underlying === u.name);
-    const tr = trackRecord(rows);
-    const settled = Object.values(S.outcomes).filter(o => o.underlying === u.name).sort((a, b) => b.expiry.localeCompare(a.expiry)).slice(0, 12);
-    out.push(`<div class="sec-h"><h2>${u.label}</h2><p>${tr ? `${tr.expiries} settled expir${tr.expiries === 1 ? 'y' : 'ies'}, ${tr.n} locked predictions` : 'No settled expiry yet'}</p></div>`);
-    if (!tr) { out.push('<div class="card note">The record starts after the first expiry that had a locked prediction settles. Locks happen at 09:45, 12:30 and 15:05 while this page is open.</div>'); continue; }
-    out.push(`<div class="kpis">${kpi('Mean error', tr.mae.toFixed(2) + '%', 'Futures price: ' + tr.fmae.toFixed(2) + '%')}${kpi('Verdict', tr.beats ? '<span class="pill p-good">Beats futures</span>' : '<span class="pill p-bad">Not yet</span>', tr.beats ? 'Signals add value so far' : 'Lean on the futures price')}
-      ${kpi('Within ±0.5%', pct(tr.w05), '')}${kpi('Within ±1%', pct(tr.w1), '')}${kpi('68% range held', pct(tr.cov68), 'Target ~68%')}${kpi('90% range held', pct(tr.cov90), 'Target ~90%')}</div>`);
-    out.push(`<div class="card" style="margin-top:14px"><div class="tw"><table><thead><tr><th>Expiry</th><th class="r">Settled</th><th class="r">Last locked call</th><th class="r">Error</th><th>68% range</th></tr></thead><tbody>${settled.map(o => {
-      const l = Object.values(S.locks).filter(x => x.underlying === u.name && x.expiry === o.expiry).sort((a, b) => b.madeAt - a.madeAt)[0];
-      const e = l ? (l.centre - o.settlement) / o.settlement * 100 : null, hit = l && l.band68 ? o.settlement >= l.band68[0] && o.settlement <= l.band68[1] : null;
-      return `<tr><td>${dlabel(o.expiry)}</td><td class="r">${fmt(o.settlement)}</td><td class="r">${l ? fmt(l.centre) : '—'}</td><td class="r">${e == null ? '—' : e.toFixed(2) + '%'}</td><td>${hit == null ? '—' : hit ? '<span class="pill p-good">Held</span>' : '<span class="pill p-bad">Missed</span>'}</td></tr>`; }).join('')}</tbody></table></div></div>`);
+    const scores = Object.values(S.scores || {}).filter(r => (r.idx || r.underlying) === u.name);
+    const per = new Map(); for (const r of scores.sort((a, b) => (a.madeAt || 0) - (b.madeAt || 0))) per.set(r.expiry, r);
+    const rows = [...per.values()];
+    const m = f => rows.length ? rows.reduce((a, r) => a + Math.abs(r[f] ?? 0), 0) / rows.length : null;
+    const cov = rows.filter(r => r.in68 != null), hits = cov.filter(r => r.in68).length;
+    out.push(`<div class="sec-h"><h2>${u.label}</h2><p>${rows.length ? rows.length + ' settled expir' + (rows.length === 1 ? 'y' : 'ies') + ', last locked call of each' : 'No settled expiry yet'}</p></div>`);
+    if (!rows.length) { out.push('<div class="card note">The chart and scores start after the first expiry with a locked prediction settles. The analyst settles it at 09:40 the next trading day.</div>'); continue; }
+    const mf = m('errPct'), mm = m('modelErrPct'), mu = m('futErrPct');
+    out.push(`<div class="kpis">${kpi('With analyst', mf.toFixed(2) + '%', 'Mean absolute error')}${kpi('Model alone', mm.toFixed(2) + '%', mf <= mm ? 'Analyst helping' : 'Analyst hurting')}${kpi('Futures price', mu.toFixed(2) + '%', mf < mu ? '<span class="up">Beaten</span>' : '<span class="down">Not beaten yet</span>')}
+      ${kpi('68% range held', cov.length ? Math.round(hits / cov.length * 100) + '%' : '—', `${hits} of ${cov.length} · target ~68%`)}${kpi('Pin held', Math.round(rows.filter(r => r.pinHeld).length / rows.length * 100) + '%', 'Within a strike of max pain or gamma pin')}${kpi('Expiries', rows.length, '')}</div>`);
+    out.push(`<div class="card" style="margin-top:14px"><h3>Predictions vs settlement</h3><div class="sub">Last locked call before each expiry, its 68% range, the futures price at that time and where the index actually settled</div><div class="chart-box"><canvas id="track-${u.name}" role="img" aria-label="${u.label} predictions versus settlements"></canvas></div></div>`);
   }
-  out.push(`<div class="sec-h"><h2>Signal weights in use</h2><p>Starting guesses until expiries settle; then pulled toward what worked, 1/11th per expiry at most.</p></div><div class="card"><div class="tw"><table><thead><tr><th>Index · stage</th>${SIGNALS.map(k => `<th class="r">${NAMES[k]}</th>`).join('')}<th>Source</th></tr></thead><tbody>
-    ${UNDERLYINGS.flatMap(u => Object.keys(PRIOR).map(b => { const w = weightSet(u.name, b); return `<tr><td class="nw">${u.label} · ${BUCKET[b]}</td>${SIGNALS.map(k => `<td class="r">${w.weights[k] == null ? '—' : pct(w.weights[k])}</td>`).join('')}<td>${w.source === 'prior' ? 'starting guess' : 'learned'}</td></tr>`; })).join('')}</tbody></table></div></div>`);
+  out.push(`<div class="sec-h"><h2>Signal weights in use</h2><p>Learned from settled expiries, at most 1/11th of the way per expiry. Approved proposals also apply here.</p></div><div class="card"><div class="tw"><table><thead><tr><th>Index · stage</th>${SIGNALS.map(k => `<th class="r">${NAMES[k]}</th>`).join('')}<th>Source</th></tr></thead><tbody>
+    ${UNDERLYINGS.flatMap(u => Object.keys(PRIOR).map(b => { const w = applyConfig(weightSet(u.name, b), S.config, u.name); return `<tr><td class="nw">${u.label} · ${BUCKET[b]}</td>${SIGNALS.map(k => `<td class="r">${w.weights[k] == null ? '—' : pct(w.weights[k])}</td>`).join('')}<td>${w.source === 'prior' ? 'starting guess' : 'learned'}</td></tr>`; })).join('')}</tbody></table></div></div>`);
   return out.join('');
+}
+function drawTrack() {
+  if (typeof Chart === 'undefined') return;
+  const tick = css('--muted'), grid = css('--line');
+  for (const u of UNDERLYINGS) {
+    const cv = document.getElementById('track-' + u.name); if (!cv) continue;
+    const last = lastLockPerExpiry(u.name);
+    const rows = Object.values(S.outcomes).filter(o => o.underlying === u.name && last.has(o.expiry)).sort((a, b) => a.expiry.localeCompare(b.expiry)).map(o => ({ o, l: last.get(o.expiry) }));
+    S.charts['track' + u.name] = new Chart(cv, { type: 'line', data: { labels: rows.map(r => dlabel(r.o.expiry)), datasets: [
+      { label: '68% low', data: rows.map(r => r.l.band68 ? r.l.band68[0] : null), borderWidth: 0, pointRadius: 0, fill: false },
+      { label: '68% range', data: rows.map(r => r.l.band68 ? r.l.band68[1] : null), borderWidth: 0, pointRadius: 0, backgroundColor: css('--band68'), fill: '-1' },
+      { label: 'Predicted', data: rows.map(r => r.l.centre), borderColor: css('--ce'), backgroundColor: css('--ce'), borderWidth: 2, pointRadius: 4 },
+      { label: 'Futures at lock', data: rows.map(r => r.l.future ?? r.l.forward), borderColor: css('--fwd'), borderDash: [5, 4], borderWidth: 2, pointRadius: 0 },
+      { label: 'Settlement', data: rows.map(r => r.o.settlement), borderColor: css('--pe'), backgroundColor: css('--pe'), showLine: false, pointRadius: 6, pointStyle: 'rectRot' }] },
+      options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { labels: { color: tick, boxWidth: 10, boxHeight: 10, filter: i => i.text !== '68% low' } }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmt(c.parsed.y)}` } } },
+        scales: { x: { grid: { display: false }, ticks: { color: tick } }, y: { grid: { color: grid }, border: { display: false }, ticks: { color: tick, callback: v => fmt(v) } } } } });
+  }
+}
+function pmView() {
+  const pms = (S.postmortems || []).sort((a, b) => b.expiry.localeCompare(a.expiry));
+  if (!pms.length) return '<div class="card empty">No post-mortems yet. After each expiry the analyst scores its calls, names the type of miss and writes the lesson here.</div>';
+  return `<div class="grid">${pms.map(p => `<div class="card s6"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline">
+    <h3>${esc((UNDERLYINGS.find(u => u.name === p.idx) || {}).label || p.idx)} ${esc(p.kind || '')} · ${dlabel(p.expiry)}</h3><span>${missPill(p.miss)}${p.pinHeld ? ' <span class="pill p-info">Pin held</span>' : ''}</span></div>
+    <div class="sub">Settled ${fmt(p.settlement)} · last call ${fmt(p.centre)} (${(p.errPct || 0).toFixed(2)}%) · futures ${(p.futErrPct || 0).toFixed(2)}% · overlay ${esc(p.overlayEffect || '')}</div>
+    <p style="margin:0 0 8px">${esc(p.narrative)}</p><div class="banner info" style="margin:0"><b>Lesson.</b> ${esc(p.lesson || '')}</div></div>`).join('')}</div>`;
+}
+function propView() {
+  const ps = (S.proposals || []).sort((a, b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1) || (b.createdMs || 0) - (a.createdMs || 0));
+  if (!ps.length) return '<div class="card empty">No proposed changes. When a mistake repeats (for example, ranges holding far less than 68% of the time), the analyst proposes a change here for you to approve.</div>';
+  const st = { pending: 'p-warn', approved: 'p-info', applied: 'p-good', rejected: 'p-neutral' };
+  return `<div class="grid">${ps.map(p => `<div class="card s6"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline"><h3>${esc(p.title)}</h3><span class="pill ${st[p.status] || 'p-neutral'}">${esc(p.status)}</span></div>
+    <div class="sub">${p.createdMs ? 'Proposed ' + dtlabel(p.createdMs) : ''}</div><p style="margin:0 0 10px">${esc(p.evidence)}</p>
+    <p class="note" style="margin:0 0 10px">Change: ${esc(describeChange(p.change))}</p>
+    ${p.status === 'pending' ? `<div style="display:flex;gap:8px"><button class="chip" style="color:var(--ink);border-color:var(--line)" data-id="${esc(p.id)}" data-dec="approved">Approve</button><button class="chip" style="color:var(--muted);border-color:var(--line)" data-id="${esc(p.id)}" data-dec="rejected">Reject</button></div>` : p.status === 'approved' ? '<p class="note" style="margin:0">Approved. The next analyst run applies it.</p>' : ''}</div>`).join('')}</div>`;
+}
+function describeChange(c) {
+  if (!c) return '—';
+  if (c.field === 'kScale') return `${c.idx} range width ×${c.value}`;
+  if (c.field === 'forwardFloor') return `${c.idx} futures-implied weight at least ${Math.round(c.value * 100)}%`;
+  if (c.field === 'dropped') return `stop using ${NAMES[c.add] || c.add} for ${c.idx}`;
+  if (c.field === 'nudgeCapSigma') return `analyst may move the centre by at most ${c.value}σ`;
+  if (c.field === 'eventBandMax') return `event weeks may widen ranges up to ×${c.value}`;
+  return JSON.stringify(c);
+}
+async function decide(id, status) {
+  const p = (S.proposals || []).find(x => x.id === id); if (!p || !S.db) return;
+  try { await S.db.doc('proposals/' + id).update({ status, decidedMs: Date.now() }); p.status = status; }
+  catch (e) { $('#banner').innerHTML = `<div class="banner bad">Could not save your decision (${esc(e && e.code || 'error')}). Try again.</div>`; }
+  render();
 }
 function methodView() {
   return `<div class="card method"><h3 style="margin-top:0">What the expected settlement is</h3>
   <p>A weighted blend of seven estimates of where the index will close on expiry day: the futures-implied level, max pain (the strike where option writers pay least), the centre of the strongest put and call open-interest walls, the strike with the most gamma, a tilt from the put/call ratio near the money, a small momentum drift and the previous day's pivot.</p>
   <p>The 68% and 90% ranges come from at-the-money implied volatility, which is solved from live option prices because Kite does not provide it. Treat the centre as the middle of a range, not a target.</p>
-  <h3>Reassessments and learning</h3>
-  <p>While this page is open on a trading day it refreshes every 5 minutes and locks a formal prediction at 09:45, 12:30 and 15:05, recording why the view changed. A time it was not open for is skipped, never filled in afterwards.</p>
-  <p>After an expiry settles, every locked prediction is scored against the index close. Each signal's weight then moves toward the signals that erred least, by at most 1/11th per expiry, so one expiry cannot swing them. The track record compares the result with the plain futures price; if the signals are not beating it, the page says so.</p>
+  <h3>The analyst</h3>
+  <p>A scheduled Claude run at 09:40 and 14:45 on trading days pulls the option chains from Kite, checks the NSE market feed and searches the news for events (RBI and Fed meetings, US inflation data, FII flows, overnight markets, big bank results). It runs this same model, then may widen the range (up to ×1.3) and move the centre (up to 0.25σ), always with written reasons, and locks the prediction.</p>
+  <h3>Self-correction</h3>
+  <p>After each expiry the 09:40 run scores every locked call three ways: the model alone, the model with the analyst's overlay, and the plain futures price. It names the type of miss (event shock, trend breakout through an open-interest wall, a bigger or smaller move than implied volatility priced) and writes a post-mortem. Signal weights then move toward what worked, at most 1/11th per expiry. When a mistake repeats over the last 8 expiries, it proposes a structural change, which waits for your approval on the Proposals tab.</p>
   <h3>Data</h3>
-  <p>Everything comes from your Kite connector in claude.ai, read-only. When Kite's daily login lapses (06:00 each morning) the page says so; reconnect Kite and press Refresh.</p></div>`;
+  <p>Live numbers on this page come from your Kite connector in claude.ai, read-only. The Kite connection lasts about a week; when it lapses the page and the analyst say so. Reconnect Kite in claude.ai Settings → Connectors and press Refresh.</p></div>`;
 }
 
 // ---------- theme + boot
