@@ -9,7 +9,7 @@
   --band: #0e1a2e; --band-ink: #e9eef6; --band-muted: #9bb0cc; --accent: #9a6b1c; --focus: #2d5fa8;
   --good: #0b7a5a; --good-soft: #dff3ec; --bad: #b3322a; --bad-soft: #f8e1de; --warn: #a76a0b; --warn-soft: #f9ecd0; --info: #2f5d9e; --info-soft: #e0eaf7;
   --ce: #2a78d6; --pe: #eb6834; --band68: rgba(42,120,214,.16); --fwd: #6c7a89;
-  --hero: #12233f; --hero-2: #1b3358; --hero-ink: #f3f6fb; --hero-muted: #a9bbd4; --hero-line: #e3b664; --drift: #5ad1e6; --hero-rule: rgba(255,255,255,.12); --hero-pos: #7fe0bd; --hero-neg: #ffa69c;
+  --hero: #12233f; --hero-2: #1b3358; --hero-ink: #f3f6fb; --hero-muted: #a9bbd4; --hero-line: #e3b664; --drift: #5ad1e6; --g68: rgba(154,107,28,.55); --g90: rgba(154,107,28,.2); --hero-rule: rgba(255,255,255,.12); --hero-pos: #7fe0bd; --hero-neg: #ffa69c;
   --shadow: 0 1px 2px rgba(15,26,44,.06), 0 4px 14px rgba(15,26,44,.05);
   --serif: 'Newsreader', Georgia, 'Times New Roman', serif; --sans: 'Public Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
@@ -17,14 +17,14 @@
   --bg: #0a101c; --surface: #121a2b; --surface2: #172138; --ink: #e8edf5; --muted: #93a1b6; --line: #25314a;
   --band: #070c16; --band-ink: #e9eef6; --band-muted: #8296b3; --accent: #d9a84e; --focus: #7fa8e6;
   --good: #3dc79a; --good-soft: #10332a; --bad: #f07b70; --bad-soft: #3a1a1a; --warn: #e8b04a; --warn-soft: #36290e; --info: #7fa8e6; --info-soft: #14284a;
-  --ce: #3987e5; --pe: #d95926; --band68: rgba(57,135,229,.22); --fwd: #9aa8b8;
+  --ce: #3987e5; --pe: #d95926; --band68: rgba(57,135,229,.22); --fwd: #9aa8b8; --g68: rgba(227,182,100,.55); --g90: rgba(227,182,100,.2);
   --hero: #0f1c33; --hero-2: #17294a; --hero-ink: #eef2f9; --hero-muted: #8fa3c2; --hero-rule: rgba(255,255,255,.10); --hero-pos: #6fd6b0; --hero-neg: #ff9b90;
   --shadow: 0 1px 2px rgba(0,0,0,.4); color-scheme: dark; } }
 :root[data-theme="dark"] {
   --bg: #0a101c; --surface: #121a2b; --surface2: #172138; --ink: #e8edf5; --muted: #93a1b6; --line: #25314a;
   --band: #070c16; --band-ink: #e9eef6; --band-muted: #8296b3; --accent: #d9a84e; --focus: #7fa8e6;
   --good: #3dc79a; --good-soft: #10332a; --bad: #f07b70; --bad-soft: #3a1a1a; --warn: #e8b04a; --warn-soft: #36290e; --info: #7fa8e6; --info-soft: #14284a;
-  --ce: #3987e5; --pe: #d95926; --band68: rgba(57,135,229,.22); --fwd: #9aa8b8;
+  --ce: #3987e5; --pe: #d95926; --band68: rgba(57,135,229,.22); --fwd: #9aa8b8; --g68: rgba(227,182,100,.55); --g90: rgba(227,182,100,.2);
   --hero: #0f1c33; --hero-2: #17294a; --hero-ink: #eef2f9; --hero-muted: #8fa3c2; --hero-rule: rgba(255,255,255,.10); --hero-pos: #6fd6b0; --hero-neg: #ff9b90;
   --shadow: 0 1px 2px rgba(0,0,0,.4); color-scheme: dark; }
 * { box-sizing: border-box; }
@@ -96,6 +96,21 @@ main { padding-block: 18px 40px; }
 .scale .edge b { display: block; font-size: 11.5px; }
 .scale .edge.e68 { color: var(--hero-line); } .scale .edge.e90 { color: var(--hero-muted); }
 .scale .edge.e90 b { color: var(--hero-ink); font-weight: 500; }
+.ladder { margin-bottom: 16px; }
+.lad-row { display: grid; grid-template-columns: 170px minmax(0, 1fr) 150px; gap: 14px; align-items: center; width: 100%; background: transparent; border: 0; border-top: 1px solid var(--line); padding: 9px 8px; text-align: left; color: var(--ink); border-radius: 0; }
+button.lad-row:hover { background: var(--surface2); }
+.lad-row.on { background: var(--surface2); box-shadow: inset 3px 0 0 var(--accent); }
+.lad-row.axis { border-top: 0; padding-block: 0 4px; }
+.lad-lab b, .lad-val b { display: block; font-size: 14px; } .lad-lab small, .lad-val small { color: var(--muted); font-size: 11.5px; }
+.lad-val { text-align: right; } .lad-val b { font: 600 17px/1.2 var(--serif); }
+.lad-bar { position: relative; height: 16px; border-radius: 8px; background: var(--surface2); }
+.lad-bar i { position: absolute; top: 0; height: 100%; border-radius: 8px; }
+.lad-bar .l90 { background: var(--g90); } .lad-bar .l68 { background: var(--g68); }
+.lad-bar .lexp { width: 4px; top: -5px; height: 26px; border-radius: 2px; background: var(--ink); transform: translateX(-50%); }
+.lad-bar .lspot { width: 0; top: -9px; height: 34px; border-radius: 0; border-left: 2px dashed var(--muted); }
+.lad-axis { position: relative; height: 16px; }
+.lad-axis span { position: absolute; transform: translateX(-50%); font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+@media (max-width: 620px) { .lad-row { grid-template-columns: minmax(0, 1fr) auto; } .lad-bar, .lad-axis { grid-column: 1 / -1; order: 3; } .lad-row.axis > span:not(.lad-axis) { display: none; } }
 .drift-lab { margin-top: 6px; font-size: 12px; color: var(--hero-muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .drift-lab i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--drift); }
 .xchips { display: flex; gap: 6px 8px; flex-wrap: wrap; margin-top: 4px; }
@@ -148,7 +163,7 @@ footer { color: var(--muted); font-size: 12px; padding-block: 18px; }
 <header class="mast">
   <div class="wrap">
     <div class="mast-top">
-      <div class="brand"><h1>F&amp;O Expiry Desk</h1><span id="asof">Nifty weekly · Nifty monthly · Bank Nifty monthly</span></div>
+      <div class="brand"><h1>F&amp;O Expiry Desk</h1><span id="asof">Nifty: 3 weeklies + monthly · Bank Nifty: monthly</span></div>
       <div class="ticker" id="ticker" aria-label="Index levels"></div>
       <div class="sp"></div>
       <span class="chip" id="status">Connecting to Kite…</span>
@@ -169,7 +184,7 @@ footer { color: var(--muted); font-size: 12px; padding-block: 18px; }
 <script>
 /*ENGINE-START*/
 const UNDERLYINGS = [
-  { name: 'NIFTY', label: 'Nifty', spot: 'NSE:NIFTY 50', token: 256265, step: 50, kinds: ['weekly', 'monthly'], thr: 0.003 },
+  { name: 'NIFTY', label: 'Nifty', spot: 'NSE:NIFTY 50', token: 256265, step: 50, kinds: ['weekly', 'weekly2', 'weekly3', 'monthly'], thr: 0.003 },
   { name: 'BANKNIFTY', label: 'Bank Nifty', spot: 'NSE:NIFTY BANK', token: 260105, step: 100, kinds: ['monthly'], thr: 0.004 },
 ];
 const VIX = 'NSE:INDIA VIX';
@@ -371,7 +386,7 @@ function applyConfig(ws, cfg, idx) {
 /*ENGINE-END*/
 
 // ---------- connector + store
-const S = { mcp: null, db: null, indices: {}, panels: {}, locks: {}, outcomes: {}, weights: {}, tab: 'NIFTY-weekly', oiMode: {}, charts: {}, busy: false, err: null, dataMs: null };
+const S = { mcp: null, db: null, indices: {}, panels: {}, locks: {}, outcomes: {}, weights: {}, tab: 'NIFTY', sel: {}, oiMode: {}, charts: {}, busy: false, err: null, dataMs: null };
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 async function kite(args) {
@@ -450,7 +465,8 @@ async function refreshUnderlying(u, now) {
   if (!mch.future) for (const e of live) { const c = await chainFor(u, e); if (c.future) { monthly = e; mch = c; break; } }
   if (!mch.future) throw { code: 'no_future', message: 'Kite returned no futures contract for ' + u.label };
   const futExp = mch.future.expiry_date || monthly, futId = mch.future.id;
-  const exps = {}; if (u.kinds.includes('weekly')) exps.weekly = live[0]; if (u.kinds.includes('monthly')) exps.monthly = monthly;
+  // weekly = nearest live expiry, weekly2/weekly3 = the next two; monthly carries the future
+  const exps = {}; ['weekly', 'weekly2', 'weekly3'].forEach((k, i) => { if (u.kinds.includes(k) && live[i]) exps[k] = live[i]; }); if (u.kinds.includes('monthly')) exps.monthly = monthly;
   const head = await kite({ mode: 'quote', instruments: [u.spot, VIX, futId] });
   if (!head[u.spot] || !head[futId]) throw { code: 'no_quote', message: 'Kite returned no quote for ' + u.label + ' spot or futures' };
   const spot = parseQuote(head[u.spot]).ltp, fut = parseQuote(head[futId]).ltp, vix = head[VIX] ? parseQuote(head[VIX]).ltp : null;
@@ -511,7 +527,7 @@ async function refresh() {
 }
 
 // ---------- rendering
-const KIND = { weekly: 'weekly', monthly: 'monthly' };
+const KIND = { weekly: 'current weekly', weekly2: 'next weekly', weekly3: 'third weekly', monthly: 'monthly' };
 const BUCKET = { gt5: '6+ trading days', '2to5': '2–5 trading days', le1: 'expiry day / 1 day' };
 const NAMES = { forward: 'Futures-implied', max_pain: 'Max pain', wall_centre: 'OI walls', gamma_pin: 'Gamma pin', pcr: 'PCR tilt', momentum: 'Momentum', pivot: 'Pivot' };
 const pct = x => x == null ? '—' : Math.round(x * 100) + '%';
@@ -521,7 +537,7 @@ function dtlabel(ms) { return new Date(ms).toLocaleString('en-IN', { day: 'numer
 function setStatus(text, cls) { const s = $('#status'); s.textContent = text; s.className = 'chip ' + (cls || ''); }
 function tabs() {
   const list = [];
-  for (const u of UNDERLYINGS) for (const k of u.kinds) list.push([`${u.name}-${k}`, `${u.label} ${KIND[k]}`, S.panels[`${u.name}-${k}`]]);
+  for (const u of UNDERLYINGS) list.push([u.name, u.label, S.panels[`${u.name}-${u.kinds[0]}`]]);
   const pend = (S.proposals || []).filter(p => p.status === 'pending').length;
   list.push(['analyst', 'Analyst'], ['track', 'Track record'], ['pm', 'Post-mortems'], ['props', 'Proposals' + (pend ? ' (' + pend + ')' : '')], ['method', 'How it works']);
   $('#tabs').innerHTML = list.map(([id, l, p]) => `<button class="tab" role="tab" aria-selected="${S.tab === id}" data-t="${id}">${esc(l)}${p ? `<span class="n">${dlabel(p.expiry)}</span>` : ''}</button>`).join('');
@@ -535,7 +551,7 @@ function render() {
   $('#ticker').innerHTML = UNDERLYINGS.map(u => { const t = S.indices[u.name] || (S.panels[u.name + '-monthly'] ? { spot: S.panels[u.name + '-monthly'].spot } : null); if (!t) return ''; const ch = t.prevClose ? (t.spot / t.prevClose - 1) * 100 : null;
     return `<span class="tk"><span>${u.label}</span><b>${fmt(t.spot)}</b>${ch == null ? '' : `<em class="${ch >= 0 ? 'up' : 'dn'}" style="font-style:normal">${ch >= 0 ? '▲' : '▼'} ${Math.abs(ch).toFixed(2)}%</em>`}</span>`; }).join('')
     + (() => { const v = (S.indices.NIFTY || {}).vix; return v ? `<span class="tk"><span>India VIX</span><b>${v.toFixed(2)}</b></span>` : ''; })();
-  $('#asof').textContent = S.dataMs ? 'Updated ' + dtlabel(S.dataMs) + ' IST · refreshes every 5 min while open in market hours' : 'Nifty weekly · Nifty monthly · Bank Nifty monthly';
+  $('#asof').textContent = S.dataMs ? 'Updated ' + dtlabel(S.dataMs) + ' IST · refreshes every 5 min while open in market hours' : 'Nifty: 3 weeklies + monthly · Bank Nifty: monthly';
   $('#banner').innerHTML = S.err ? `<div class="banner bad">${esc(errText(S.err))}${Object.keys(S.panels).length ? ' Showing the last saved data below.' : ''}</div>` : '';
   Object.values(S.charts).forEach(c => c.destroy()); S.charts = {};
   const v = $('#view');
@@ -544,11 +560,36 @@ function render() {
   if (S.tab === 'pm') { v.innerHTML = pmView(); return; }
   if (S.tab === 'props') { v.innerHTML = propView(); v.querySelectorAll('[data-dec]').forEach(b => b.onclick = () => decide(b.dataset.id, b.dataset.dec)); return; }
   if (S.tab === 'method') { v.innerHTML = methodView(); return; }
-  const p = S.panels[S.tab];
+  const u = UNDERLYINGS.find(x => x.name === S.tab) || UNDERLYINGS[0];
+  const key = S.sel[u.name] && S.panels[S.sel[u.name]] ? S.sel[u.name] : u.kinds.map(k => `${u.name}-${k}`).find(k => S.panels[k]);
+  const p = key && S.panels[key];
   if (!p) { v.innerHTML = `<div class="card empty">${S.busy || !S.err ? 'Fetching the live option chain from Kite…' : 'No data yet for this contract. Press Refresh once Kite is connected.'}</div>`; return; }
-  v.innerHTML = panelView(p, now);
+  v.innerHTML = ladderView(u, now, p.key) + panelView(p, now);
+  v.querySelectorAll('[data-key]').forEach(b => b.onclick = () => { S.sel[u.name] = b.dataset.key; render(); });
   drawCharts(p);
   const sg = v.querySelector('[data-oi]'); if (sg) sg.querySelectorAll('button').forEach(b => b.onclick = () => { S.oiMode[p.key] = b.dataset.m; render(); });
+}
+function tradingDaysLeft(today, expiry) { let n = 0; const d = new Date(today + 'T00:00:00Z'), e = new Date(expiry + 'T00:00:00Z'); while (d < e) { d.setUTCDate(d.getUTCDate() + 1); const w = d.getUTCDay(); if (w > 0 && w < 6) n++; } return n; }
+// Every expiry of one index on a common level scale, so the term structure of the forecast is visible at a glance.
+function ladderView(u, now, selKey) {
+  const rows = []; const seen = new Set();
+  for (const k of u.kinds) { const p = S.panels[`${u.name}-${k}`]; if (p && p.pred && !seen.has(p.key)) { seen.add(p.key); rows.push({ p, pr: withOverlay(p) }); } }
+  if (!rows.length) return '';
+  const vals = rows.flatMap(({ p, pr }) => [p.spot, pr.centre, ...(pr.band90 || [])]).filter(Number.isFinite);
+  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = (hi - lo) * 0.04; lo -= pad; hi += pad;
+  const pos = x => clamp((x - lo) / (hi - lo) * 100, 0, 100);
+  const st = [50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000].find(x => (hi - lo) / x <= 8) || 10000;
+  const ticks = []; for (let t = Math.ceil(lo / st) * st; t <= hi; t += st) if (pos(t) > 3 && pos(t) < 97) ticks.push(t);
+  const spot = rows[0].p.spot;
+  return `<section class="card ladder"><h3>${u.label}: every expiry on one scale</h3>
+    <div class="sub">Black mark = expected settlement, gold = 68% range, faint gold = 90% range, dashed line = spot ${fmt(spot)}. Click a row to see that expiry in detail below.</div>
+    <div class="lad-row axis"><span></span><span class="lad-axis">${ticks.map(t => `<span style="left:${pos(t)}%">${fmt(t)}</span>`).join('')}</span><span></span></div>
+    ${rows.map(({ p, pr }) => { const d = tradingDaysLeft(now.date, p.expiry); return `<button type="button" class="lad-row${p.key === selKey ? ' on' : ''}" data-key="${p.key}" aria-pressed="${p.key === selKey}">
+      <span class="lad-lab"><b>${dlabel(p.expiry)}</b><small>${KIND[p.kind]} · ${d === 0 ? 'expires today' : d + ' trading day' + (d === 1 ? '' : 's')}</small></span>
+      <span class="lad-bar">${pr.band90 ? `<i class="l90" style="left:${pos(pr.band90[0])}%;width:${pos(pr.band90[1]) - pos(pr.band90[0])}%"></i><i class="l68" style="left:${pos(pr.band68[0])}%;width:${pos(pr.band68[1]) - pos(pr.band68[0])}%"></i>` : ''}
+        <i class="lspot" style="left:${pos(spot)}%"></i><i class="lexp" style="left:${pos(pr.centre)}%" title="Expected ${fmt(pr.centre)}"></i></span>
+      <span class="lad-val"><b>${fmt(pr.centre)}</b><small>${pr.band68 ? `68% ${fmt(pr.band68[0])}–${fmt(pr.band68[1])}` : 'no range'}</small></span></button>`; }).join('')}
+  </section>`;
 }
 function panelView(p, now) {
   const pr = withOverlay(p), s = p.signals, stale = Date.now() - p.dataMs > 10 * 60e3 && now.hm >= '09:15' && now.hm <= '15:30' && now.dow > 0 && now.dow < 6;
