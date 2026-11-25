@@ -319,8 +319,14 @@ function trackRecord(rows) {
     cov90: b90.length ? b90.filter(r => r.in90).length / b90.length : null, beats: mae < fmae };
 }
 const DEFAULT_CONFIG = { kScale: { NIFTY: 1, BANKNIFTY: 1 }, eventBandMax: 1.3, nudgeCapSigma: 0.25, dropped: { NIFTY: [], BANKNIFTY: [] }, forwardFloor: { NIFTY: 0, BANKNIFTY: 0 } };
+function mergeConfig(cfg) {
+  const d = DEFAULT_CONFIG, c = cfg || {};
+  return { kScale: { ...d.kScale, ...(c.kScale || {}) }, eventBandMax: +c.eventBandMax || d.eventBandMax,
+    nudgeCapSigma: c.nudgeCapSigma == null || isNaN(+c.nudgeCapSigma) ? d.nudgeCapSigma : +c.nudgeCapSigma,
+    dropped: { ...d.dropped, ...(c.dropped || {}) }, forwardFloor: { ...d.forwardFloor, ...(c.forwardFloor || {}) }, changedMs: { ...(c.changedMs || {}) } };
+}
 function applyConfig(ws, cfg, idx) {
-  cfg = cfg || DEFAULT_CONFIG;
+  cfg = mergeConfig(cfg);
   const drop = new Set((cfg.dropped && cfg.dropped[idx]) || []);
   let w = Object.fromEntries(Object.entries(ws.weights).filter(([k, v]) => !drop.has(k) && v > 0));
   const tot = Object.values(w).reduce((a, b) => a + b, 0) || 1;
@@ -380,7 +386,7 @@ async function loadStore() {
   S.runs = (await dbAll('runs')).sort((a, b) => (b.runMs || 0) - (a.runMs || 0));
   if (S.db) {
     try { const a = await S.db.doc('analyst/latest').get(); S.analyst = a.exists ? a.data() : null; } catch (e) { S.analyst = null; }
-    try { const c = await S.db.doc('config/model').get(); S.config = c.exists ? c.data() : null; } catch (e) { S.config = null; }
+    try { const c = await S.db.doc('config/model').get(); S.config = mergeConfig(c.exists ? c.data() : null); } catch (e) { S.config = mergeConfig(null); }
   }
 }
 function weightSet(name, bucket) {
@@ -425,7 +431,7 @@ async function refreshUnderlying(u, now) {
   const past = hist.filter(c => c.date < now.date);
   const prevHLC = past.length ? [past[past.length - 1].high, past[past.length - 1].low, past[past.length - 1].close] : null;
   const close3 = past.length >= 3 ? past[past.length - 3].close : null;
-  const lo = spot * 0.92, hi = spot * 1.08;
+  const lo = spot * 0.97, hi = spot * 1.03; // same ±3% window as the analyst, so both compute the same signals
   const chains = {};
   for (const exp of new Set(Object.values(exps))) {
     const ch = exp === monthly ? mch : await chainFor(u, exp);
@@ -433,7 +439,8 @@ async function refreshUnderlying(u, now) {
     const ids = []; for (const s of rows) { if (s.call) ids.push(s.call.id); if (s.put) ids.push(s.put.id); }
     const quotes = ids.length ? await kite({ mode: 'quote', instruments: ids.slice(0, 500) }) : {};
     const options = [];
-    for (const s of rows) for (const [leg, type] of [['call', 'CE'], ['put', 'PE']]) if (s[leg] && quotes[s[leg].id]) options.push({ strike: +s.strike, type, ...parseQuote(quotes[s[leg].id]) });
+    // last traded prices only, as the analyst transcribes them
+    for (const s of rows) for (const [leg, type] of [['call', 'CE'], ['put', 'PE']]) if (s[leg] && quotes[s[leg].id]) options.push({ strike: +s.strike, type, ...parseQuote(quotes[s[leg].id]), bid: null, ask: null });
     chains[exp] = { expiry: exp, futExpiry: futExp, takenMs: Date.now(), spot, future: fut, options };
   }
   for (const kind of u.kinds) {
@@ -445,7 +452,7 @@ async function refreshUnderlying(u, now) {
     const bucket = dteBucket(now.date, exp);
     const pred = predict(sig, applyConfig(weightSet(u.name, bucket), S.config, u.name), bucket);
     const oiNow = Object.fromEntries(snap.options.map(o => [o.strike + '|' + o.type, o.oi]));
-    const strikes = [...new Set(snap.options.map(o => o.strike))].sort((a, b) => a - b).filter(k => k >= spot * 0.96 && k <= spot * 1.04);
+    const strikes = [...new Set(snap.options.map(o => o.strike))].sort((a, b) => a - b).filter(k => k >= spot * 0.97 && k <= spot * 1.03);
     const ce = Object.fromEntries(snap.options.filter(o => o.type === 'CE').map(o => [o.strike, o.oi])), pe = Object.fromEntries(snap.options.filter(o => o.type === 'PE').map(o => [o.strike, o.oi]));
     const panel = {
       key, underlying: u.name, label: u.label, kind, expiry: exp, futExpiry: futExp, dataMs: Date.now(), spotTs: spotTs ? String(spotTs) : null,
@@ -547,7 +554,7 @@ function panelView(p, now) {
     ${kpi('ATM IV', s.atmIv == null ? '—' : (s.atmIv * 100).toFixed(1) + '%', '1σ to expiry ±' + fmt(s.sigma))}
     ${kpi('Data quality', s.quality === 'ok' ? '<span class="pill p-good">OK</span>' : '<span class="pill p-warn">Low</span>', s.quality === 'ok' ? 'IV solved across the chain' : 'Few strikes priced')}
   </div>
-  <div class="sec-h"><h2>Open interest</h2><p>Strikes within ±4% of spot. Dashed line marks spot.</p></div>
+  <div class="sec-h"><h2>Open interest</h2><p>Strikes within ±3% of spot, the window the model uses. Dashed line marks spot.</p></div>
   <div class="grid">
     <div class="card s8"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
       <h3>${(S.oiMode[p.key] || 'oi') === 'oi' ? 'Open interest by strike' : 'Change since previous close'}</h3>
@@ -602,9 +609,9 @@ function drawCharts(p) {
   }
 }
 // ---------- analyst overlay, track record, post-mortems, proposals
-function analystOverlay(p) { const o = S.analyst && S.analyst.overlays && S.analyst.overlays[p.key]; return o && o.expiry === p.expiry ? o : null; }
+function analystOverlay(p) { const o = S.analyst && S.analyst.overlays && S.analyst.overlays[p.key]; return o && o.expiry === p.expiry && S.analyst.runMs && Date.now() - S.analyst.runMs < 30 * 3600e3 ? o : null; }
 function withOverlay(p) {
-  const pr = p.pred, o = analystOverlay(p), sg = p.signals.sigma, cfg = S.config || DEFAULT_CONFIG;
+  const pr = p.pred, o = analystOverlay(p), sg = p.signals.sigma, cfg = mergeConfig(S.config);
   if (!o || !sg || !pr.band68) return { ...pr, modelCentre: pr.centre, ov: null };
   const nudge = clamp(+o.nudgeSigma || 0, -cfg.nudgeCapSigma, cfg.nudgeCapSigma), bm = clamp(+o.bandMult || 1, 1, cfg.eventBandMax);
   const centre = pr.centre + nudge * sg, h68 = (pr.band68[1] - pr.band68[0]) / 2 * bm, h90 = (pr.band90[1] - pr.band90[0]) / 2 * bm;
@@ -645,7 +652,7 @@ function trackView() {
     const scores = Object.values(S.scores || {}).filter(r => (r.idx || r.underlying) === u.name);
     const per = new Map(); for (const r of scores.sort((a, b) => (a.madeAt || 0) - (b.madeAt || 0))) per.set(r.expiry, r);
     const rows = [...per.values()];
-    const m = f => rows.length ? rows.reduce((a, r) => a + Math.abs(r[f] ?? 0), 0) / rows.length : null;
+    const m = f => { const xs = rows.filter(r => r[f] != null); return xs.length ? xs.reduce((a, r) => a + Math.abs(r[f]), 0) / xs.length : NaN; };
     const cov = rows.filter(r => r.in68 != null), hits = cov.filter(r => r.in68).length;
     out.push(`<div class="sec-h"><h2>${u.label}</h2><p>${rows.length ? rows.length + ' settled expir' + (rows.length === 1 ? 'y' : 'ies') + ', last locked call of each' : 'No settled expiry yet'}</p></div>`);
     if (!rows.length) { out.push('<div class="card note">The chart and scores start after the first expiry with a locked prediction settles. The analyst settles it at 09:40 the next trading day.</div>'); continue; }
@@ -669,7 +676,7 @@ function drawTrack() {
       { label: '68% low', data: rows.map(r => r.l.band68 ? r.l.band68[0] : null), borderWidth: 0, pointRadius: 0, fill: false },
       { label: '68% range', data: rows.map(r => r.l.band68 ? r.l.band68[1] : null), borderWidth: 0, pointRadius: 0, backgroundColor: css('--band68'), fill: '-1' },
       { label: 'Predicted', data: rows.map(r => r.l.centre), borderColor: css('--ce'), backgroundColor: css('--ce'), borderWidth: 2, pointRadius: 4 },
-      { label: 'Futures at lock', data: rows.map(r => r.l.future ?? r.l.forward), borderColor: css('--fwd'), borderDash: [5, 4], borderWidth: 2, pointRadius: 0 },
+      { label: 'Futures-implied at lock', data: rows.map(r => r.l.forward ?? r.l.future), borderColor: css('--fwd'), borderDash: [5, 4], borderWidth: 2, pointRadius: 0 },
       { label: 'Settlement', data: rows.map(r => r.o.settlement), borderColor: css('--pe'), backgroundColor: css('--pe'), showLine: false, pointRadius: 6, pointStyle: 'rectRot' }] },
       options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
         plugins: { legend: { labels: { color: tick, boxWidth: 10, boxHeight: 10, filter: i => i.text !== '68% low' } }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmt(c.parsed.y)}` } } },

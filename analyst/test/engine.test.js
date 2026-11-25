@@ -46,3 +46,16 @@ test('overlay is clamped and reasons kept', () => {
   assert.equal(lock.reason, 'first prediction of the series');
   assert.equal(lock.future, 25200);
 });
+
+test('partial config is merged with defaults', () => {
+  const ch = sampleChain(eng);
+  const lock = buildLock({ chain: ch, nowMs: ch.takenMs, cfg: { kScale: { NIFTY: 1.2 } }, overlay: { bandMult: 1.2 }, events: [], prevLock: null, slot: '09:40' });
+  assert.ok(Number.isFinite(lock.centre) && Number.isFinite(lock.band68[0]));
+  assert.equal(lock.overlay.bandMult, 1.2);
+  assert.ok(Math.abs(lock.kEff - 1.2) < 1e-9);
+});
+
+test('validate requires a strike step', () => {
+  const { step, ...noStep } = sampleChain(eng);
+  assert.throws(() => validateChain(noStep), /step/);
+});

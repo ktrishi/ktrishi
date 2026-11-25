@@ -77,3 +77,27 @@ test('applyApproved changes config', () => {
   assert.deepEqual(appliedIds, ['x', 'y']);
   assert.equal(DEFAULT_CONFIG.kScale.NIFTY, 1);
 });
+
+test('futures baseline uses the expiry-adjusted forward', () => {
+  const s = scoreLock(L({ future: 26110, forward: 26013 }), 26010);
+  assert.ok(Math.abs(s.futErrPct - (26013 - 26010) / 26010 * 100) < 1e-9);
+});
+
+test('widen proposal is relative to the current effective width and ignores pre-change scores', () => {
+  const rows = scoresWithCoverage(3).map(r => ({ ...r, kEff: 1.25 }));
+  const p = proposals('NIFTY', rows, { ...DEFAULT_CONFIG, kScale: { NIFTY: 1.25, BANKNIFTY: 1 } }, []).find(x => x.rule === 'widen_range');
+  assert.ok(p);
+  assert.ok(Math.abs(p.change.value - 2.0) < 1e-9, 'p68 z=2.0 on effective 1.25 at scale 1.25 -> scale 2.0, got ' + p.change.value);
+  const cfg = { ...DEFAULT_CONFIG, changedMs: { 'kScale:NIFTY': 100 } };
+  assert.equal(proposals('NIFTY', rows, cfg, []).filter(x => x.rule === 'widen_range').length, 0);
+});
+
+test('recently rejected proposals are not raised again', () => {
+  const rejected = [{ idx: 'NIFTY', rule: 'widen_range', status: 'rejected', decidedMs: Date.UTC(2026, 10, 20) }];
+  assert.equal(proposals('NIFTY', scoresWithCoverage(3), DEFAULT_CONFIG, rejected, Date.UTC(2026, 10, 25)).filter(x => x.rule === 'widen_range').length, 0);
+});
+
+test('BANKNIFTY pin uses its own step', () => {
+  const m = classifyMiss(L({ idx: 'BANKNIFTY', step: undefined, maxPain: 62000, gammaPin: null }), 62090);
+  assert.equal(m.pinHeld, true);
+});

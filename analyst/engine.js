@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 
 const EXPORTS = ['UNDERLYINGS', 'PRIOR', 'PRIOR_K', 'SIGNALS', 'ist', 'closeMs', 'yearFrac', 'isLive', 'dteBucket', 'ncdf', 'b76',
-  'impliedVol', 'computeSignals', 'predict', 'fmt', 'compare', 'scoreLocks', 'refit', 'trackRecord', 'percentile', 'clamp', 'applyConfig', 'DEFAULT_CONFIG'];
+  'impliedVol', 'computeSignals', 'predict', 'fmt', 'compare', 'scoreLocks', 'refit', 'trackRecord', 'percentile', 'clamp', 'applyConfig', 'mergeConfig', 'DEFAULT_CONFIG'];
 
 const DEFAULT_HTML = require('node:path').join(__dirname, '..', 'artifact', 'fo_expiry_desk.html');
 
@@ -21,7 +21,7 @@ function loadEngine(htmlPath) {
 function validateChain(c) {
   if (!c || !Array.isArray(c.rows) || !c.rows.length) throw new Error('chain has no strike rows');
   for (const f of ['idx', 'kind', 'expiry', 'futExpiry']) if (!c[f]) throw new Error(`chain is missing ${f}`);
-  for (const f of ['spot', 'future', 'takenMs']) if (!(Number(c[f]) > 0)) throw new Error(`chain ${f} must be a positive number`);
+  for (const f of ['spot', 'future', 'takenMs', 'step']) if (!(Number(c[f]) > 0)) throw new Error(`chain ${f} must be a positive number`);
   const seen = new Set();
   for (const r of c.rows) {
     if (seen.has(r.strike)) throw new Error(`duplicate strike ${r.strike}`);
@@ -44,7 +44,7 @@ function toSnap(c) {
 
 function buildLock({ chain, nowMs, weights, cfg, overlay, events, prevLock, slot, htmlPath }) {
   const eng = loadEngine(htmlPath || DEFAULT_HTML);
-  cfg = cfg || eng.DEFAULT_CONFIG;
+  cfg = eng.mergeConfig(cfg);
   validateChain(chain);
   const now = eng.ist(nowMs);
   const sig = eng.computeSignals(toSnap(chain), chain.oiPrev || null, chain.prevHLC || null, chain.close3 || null);
@@ -60,13 +60,13 @@ function buildLock({ chain, nowMs, weights, cfg, overlay, events, prevLock, slot
   const band = k => sigma ? [centre - k * sigma * bandMult, centre + k * sigma * bandMult] : null;
   const cur = { centre, supports: sig.supports, resistances: sig.resistances, pcrAtm: sig.pcrAtm };
   const [changed, reason] = eng.compare(prevLock ? { centre: prevLock.centre, supports: prevLock.supports, resistances: prevLock.resistances, pcrAtm: prevLock.pcrAtm } : null,
-    cur, chain.idx === 'BANKNIFTY' ? 0.004 : 0.003);
+    cur, (eng.UNDERLYINGS.find(u => u.name === chain.idx) || { thr: 0.003 }).thr);
   const key = `${chain.idx}-${chain.kind}`;
   return {
     id: `${key}-${chain.expiry}-${now.date}-${(slot || now.hm).replace(':', '')}`,
     key, idx: chain.idx, underlying: chain.idx, kind: chain.kind, expiry: chain.expiry, date: now.date, slot: slot || now.hm, madeAt: nowMs,
     centre, band68: band(ws.k68), band90: band(ws.k90), modelCentre: p.centre, modelBand68: p.band68, modelBand90: p.band90,
-    sigma, forward: sig.forward, future: chain.future, spot: chain.spot, vix: chain.vix ?? null, step: chain.step,
+    sigma, kEff: ws.k68, forward: sig.forward, future: chain.future, spot: chain.spot, vix: chain.vix ?? null, step: chain.step,
     centres: sig.centres, supports: sig.supports, resistances: sig.resistances, maxPain: sig.maxPain, gammaPin: sig.gammaPin,
     pcrAtm: sig.pcrAtm, atmIv: sig.atmIv, quality: sig.quality, bucket, version: ws.version, weights: p.weights,
     overlay: { bandMult, nudgeSigma, reasons: Array.isArray(ov.reasons) ? ov.reasons.slice(0, 6) : [] },

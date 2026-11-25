@@ -62,3 +62,23 @@ test('state command assembles a dump directory', () => {
   assert.equal(st.versions['config/model'], 3);
   assert.deepEqual(st.locks, []);
 });
+
+test('settle writes outcomes last and asks for missing versions instead of writing', () => {
+  const d = tmp(), eng = loadEngine(HTML), ch = sampleChain(eng);
+  const { buildLock, DEFAULT_CONFIG } = require('../engine');
+  const lock = buildLock({ chain: ch, nowMs: ch.takenMs, cfg: DEFAULT_CONFIG, overlay: {}, events: [], prevLock: null, slot: '09:40' });
+  const base = { locks: [lock], outcomes: {}, scores: [], proposals: [], config: DEFAULT_CONFIG, versions: {} };
+  fs.writeFileSync(path.join(d, 'candles.json'), JSON.stringify({ NIFTY: [{ date: '2026-11-23', close: 25366.4 }] }));
+  const now = String(Date.UTC(2026, 10, 24, 4, 10));
+  fs.writeFileSync(path.join(d, 'state.json'), JSON.stringify({ ...base, existing: ['weights/NIFTY-2to5'] }));
+  let err = '';
+  try { execFileSync('node', [RUN, 'settle', '--state', path.join(d, 'state.json'), '--candles', path.join(d, 'candles.json'), '--now', now, '--out', path.join(d, 'a')], { stdio: 'pipe' }); }
+  catch (e) { err = String(e.stderr); }
+  assert.match(err, /NEEDS_VERSION weights\/NIFTY-2to5/);
+  assert.equal(fs.existsSync(path.join(d, 'a', 'batch-1.json')), false);
+  fs.writeFileSync(path.join(d, 'state.json'), JSON.stringify(base));
+  execFileSync('node', [RUN, 'settle', '--state', path.join(d, 'state.json'), '--candles', path.join(d, 'candles.json'), '--now', now, '--out', path.join(d, 'b')]);
+  const entries = JSON.parse(fs.readFileSync(path.join(d, 'b', 'batch-1.json'), 'utf8'));
+  const cols = entries.map(e => e.collection);
+  assert.ok(cols.lastIndexOf('outcomes') > cols.lastIndexOf('scores') && cols.lastIndexOf('outcomes') > cols.lastIndexOf('weights'));
+});

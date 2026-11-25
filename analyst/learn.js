@@ -1,6 +1,9 @@
 'use strict';
 // Settlement, post-mortems and change proposals. Pure functions; the CLI turns them into database writes.
 
+const { loadEngine } = require('./engine');
+const ENG = () => loadEngine(require('node:path').join(__dirname, '..', 'artifact', 'fo_expiry_desk.html'));
+const stepOf = l => l.step || ((ENG().UNDERLYINGS.find(u => u.name === l.idx) || {}).step) || 50;
 const fmt = x => x == null || !isFinite(x) ? '—' : Math.round(x).toLocaleString('en-IN');
 const pct = (p, s) => (p - s) / s * 100;
 const mean = xs => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
@@ -18,7 +21,7 @@ const LESSON = {
 };
 
 function classifyMiss(lock, settle) {
-  const step = lock.step || 50;
+  const step = stepOf(lock);
   const pinHeld = (lock.maxPain != null && Math.abs(settle - lock.maxPain) <= step) || (lock.gammaPin != null && Math.abs(settle - lock.gammaPin) <= step);
   if (!lock.sigma || !lock.band68) return { type: 'no_range', pinHeld, z: null };
   const z = Math.abs(settle - lock.centre) / lock.sigma;
@@ -39,7 +42,8 @@ function scoreLock(lock, settle) {
   return {
     id: lock.id, idx: lock.idx, kind: lock.kind, expiry: lock.expiry, bucket: lock.bucket, madeAt: lock.madeAt, slot: lock.slot, date: lock.date,
     centre: lock.centre, modelCentre, future: lock.future, sigma: lock.sigma, settlement: settle,
-    errPct: pct(lock.centre, settle), modelErrPct: pct(modelCentre, settle), futErrPct: pct(lock.future ?? lock.forward, settle),
+    errPct: pct(lock.centre, settle), modelErrPct: pct(modelCentre, settle), futErrPct: pct(lock.forward ?? lock.future, settle),
+    kEff: lock.kEff ?? (lock.modelBand68 && lock.sigma ? (lock.modelBand68[1] - lock.modelBand68[0]) / 2 / lock.sigma : null),
     in68: inside(lock.band68, settle), in90: inside(lock.band90, settle),
     zModel: lock.sigma ? Math.abs(settle - modelCentre) / lock.sigma : null,
     signalErrs: Object.fromEntries(Object.entries(lock.centres || {}).map(([k, c]) => [k, pct(c, settle)])),
@@ -58,7 +62,7 @@ function postmortem(idx, expiry, locks, settle) {
   const parts = [
     `Settled ${fmt(settle)}.`,
     `Last locked call (${last.date} ${last.slot}): ${fmt(last.centre)}, ${range}; error ${s.errPct.toFixed(2)}%, ${s.in68 ? 'inside' : 'outside'} the range.`,
-    `Futures at that time: ${fmt(s.future)} (error ${s.futErrPct.toFixed(2)}%). The analyst overlay ${overlayEffect}.`,
+    `Futures-implied level at that time: ${fmt(last.forward ?? s.future)} (error ${s.futErrPct.toFixed(2)}%). The analyst overlay ${overlayEffect}.`,
     closest ? `Closest signal: ${NAMES[closest[0]] || closest[0]} (${closest[1].toFixed(2)}%).` : '',
     s.pinHeld ? `The pin held: the settlement was within one strike of max pain or the gamma pin.` : '',
   ].filter(Boolean);
@@ -81,23 +85,27 @@ function settleDue(locks, outcomes, candles, now) {
 
 const round05 = x => Math.round(x * 20) / 20;
 function proposals(idx, scores, cfg, existing, nowMs = Date.now()) {
-  const pendingRules = new Set((existing || []).filter(p => p.idx === idx && p.status === 'pending').map(p => p.rule));
+  const recentReject = p => p.status === 'rejected' && nowMs - (p.decidedMs || p.createdMs || 0) < 30 * 864e5;
+  const pendingRules = new Set((existing || []).filter(p => p.idx === idx && (p.status === 'pending' || recentReject(p))).map(p => p.rule));
   const lastPerExpiry = new Map();
   for (const s of [...scores].filter(s => s.idx === idx).sort((a, b) => a.madeAt - b.madeAt)) lastPerExpiry.set(s.expiry, s);
   const rows = [...lastPerExpiry.values()].sort((a, b) => a.expiry.localeCompare(b.expiry)).slice(-8);
   if (rows.length < 6) return [];
   const out = [], date = new Date(nowMs).toISOString().slice(0, 10);
   const add = (rule, title, evidence, change) => { if (!pendingRules.has(rule)) out.push({ id: `${idx}-${rule}-${date}`, idx, rule, title, evidence, change, status: 'pending', createdMs: nowMs }); };
-  const ranged = rows.filter(r => r.in68 != null);
+  const since = (cfg.changedMs && cfg.changedMs['kScale:' + idx]) || 0;
+  const ranged = rows.filter(r => r.in68 != null && (r.madeAt || 0) > since);
   const cov = ranged.length ? ranged.filter(r => r.in68).length / ranged.length : null;
-  const zs = rows.map(r => r.zModel).filter(z => z != null);
+  const zs = ranged.map(r => r.zModel).filter(z => z != null);
   const curK = (cfg.kScale && cfg.kScale[idx]) || 1;
+  const kE = ranged.map(r => r.kEff).filter(k => k > 0), kNow = kE.length ? percentile(kE, 0.5) : curK;
+  const target = zs.length ? curK * percentile(zs, 0.68) / kNow : curK;
   if (cov != null && ranged.length >= 6 && cov < 0.5 && zs.length) {
-    const v = Math.min(2, round05(Math.max(curK + 0.05, percentile(zs, 0.68))));
+    const v = Math.min(2.5, round05(Math.max(curK + 0.05, target)));
     add('widen_range', `Widen ${idx} ranges`, `The 68% range held in only ${ranged.filter(r => r.in68).length} of the last ${ranged.length} expiries.`, { field: 'kScale', idx, value: v });
   }
   if (cov != null && ranged.length >= 6 && cov > 0.85 && zs.length) {
-    const v = Math.max(0.6, round05(Math.min(curK - 0.05, percentile(zs, 0.68))));
+    const v = Math.max(0.6, round05(Math.min(curK - 0.05, target)));
     add('narrow_range', `Narrow ${idx} ranges`, `The 68% range held in ${ranged.filter(r => r.in68).length} of the last ${ranged.length} expiries, more often than it should.`, { field: 'kScale', idx, value: v });
   }
   const mFinal = mean(rows.map(r => Math.abs(r.errPct))), mModel = mean(rows.map(r => Math.abs(r.modelErrPct))), mFut = mean(rows.map(r => Math.abs(r.futErrPct)));
@@ -118,13 +126,14 @@ function proposals(idx, scores, cfg, existing, nowMs = Date.now()) {
   return out;
 }
 
-function applyApproved(cfg, approved) {
+function applyApproved(cfg, approved, nowMs = Date.now()) {
   const c = JSON.parse(JSON.stringify(cfg));
+  c.changedMs = c.changedMs || {};
   const appliedIds = [];
   for (const p of approved) {
     if (p.status !== 'approved' || !p.change) continue;
     const ch = p.change;
-    if (ch.field === 'kScale' || ch.field === 'forwardFloor') { c[ch.field] = c[ch.field] || {}; c[ch.field][ch.idx] = ch.value; }
+    if (ch.field === 'kScale' || ch.field === 'forwardFloor') { c[ch.field] = c[ch.field] || {}; c[ch.field][ch.idx] = ch.value; c.changedMs[ch.field + ':' + ch.idx] = nowMs; }
     else if (ch.field === 'dropped') { c.dropped = c.dropped || {}; c.dropped[ch.idx] = [...new Set([...(c.dropped[ch.idx] || []), ch.add])]; }
     else if (ch.field === 'nudgeCapSigma' || ch.field === 'eventBandMax') c[ch.field] = ch.value;
     else continue;

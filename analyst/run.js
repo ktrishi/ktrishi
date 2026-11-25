@@ -31,16 +31,23 @@ function writeBatches(out, writes) {
   }
   console.log(`${entries.length} writes in ${files.length} batch file(s):\n${files.join('\n')}`);
 }
+let EXISTING = new Set(), MISSING = [];
 function w(collection, doc_id, data, versions) {
   const e = { op: 'set', collection, doc_id, data };
-  const v = versions && versions[`${collection}/${doc_id}`];
-  if (v) e.if_version = v;
+  const k = `${collection}/${doc_id}`, v = versions && versions[k];
+  if (v) e.if_version = v; else if (EXISTING.has(k)) MISSING.push(k);
   return e;
+}
+// An existing document can only be overwritten with its version: stop and say which versions to fetch.
+function finish(out, writes) {
+  if (MISSING.length) { console.error([...new Set(MISSING)].map(k => 'NEEDS_VERSION ' + k).join('\n')); process.exit(3); }
+  writeBatches(out, writes);
 }
 
 function lockCmd() {
   const input = readJson(arg('input')), state = readJson(arg('state'));
-  const cfg = state.config || DEFAULT_CONFIG, eng = loadEngine(HTML), versions = state.versions || {};
+  const eng = loadEngine(HTML), cfg = eng.mergeConfig(state.config), versions = state.versions || {};
+  EXISTING = new Set(state.existing || []);
   const prevLocks = state.locks || [], writes = [], made = [];
   for (const chain of input.chains) {
     const bucket = eng.dteBucket(eng.ist(input.nowMs).date, chain.expiry);
@@ -57,17 +64,18 @@ function lockCmd() {
     sources: input.sources || [],
   }, versions));
   writes.push(w('runs', String(input.nowMs), { runMs: input.nowMs, kind: 'lock', slot: input.slot, status: 'ok', locks: made.map(l => l.id) }, versions));
-  writeBatches(arg('out'), writes);
+  finish(arg('out'), writes);
 }
 
 function settleCmd() {
   const state = readJson(arg('state')), candles = readJson(arg('candles'));
   const nowMs = Number(arg('now')) || Date.now(), eng = loadEngine(HTML), now = eng.ist(nowMs), versions = state.versions || {};
-  let cfg = state.config || DEFAULT_CONFIG;
+  let cfg = eng.mergeConfig(state.config);
+  EXISTING = new Set(state.existing || []);
   const locks = state.locks || [], outcomes = state.outcomes || {}, scores = [...(state.scores || [])], props = [...(state.proposals || [])];
   const writes = [];
   // 1. apply proposals Rishi approved on the dashboard
-  const { cfg: newCfg, appliedIds } = applyApproved(cfg, props.filter(p => p.status === 'approved'));
+  const { cfg: newCfg, appliedIds } = applyApproved(cfg, props.filter(p => p.status === 'approved'), nowMs);
   if (appliedIds.length) {
     cfg = newCfg;
     writes.push(w('config', 'model', { ...cfg, updatedMs: nowMs }, versions));
@@ -75,15 +83,16 @@ function settleCmd() {
   }
   // 2. settle expired expiries that have locks
   const due = settleDue(locks, outcomes, candles, now);
-  const touched = new Set();
+  const touched = new Set(), outcomeWrites = [];
   for (const d of due) {
     const L = locks.filter(l => l.idx === d.idx && l.expiry === d.expiry);
-    writes.push(w('outcomes', `${d.idx}-${d.expiry}`, { idx: d.idx, underlying: d.idx, expiry: d.expiry, settlement: d.settlement, settledMs: nowMs }, versions));
-    for (const l of L) { const s = scoreLock(l, d.settlement); scores.push(s); writes.push(w('scores', s.id, s, versions)); }
+    // the outcome marks an expiry as settled, so it is written last: a failed batch leaves the expiry to be retried
+    outcomeWrites.push(w('outcomes', `${d.idx}-${d.expiry}`, { idx: d.idx, underlying: d.idx, expiry: d.expiry, settlement: d.settlement, settledMs: nowMs }, versions));
+    for (const l of L) { const s = scoreLock(l, d.settlement); if (!scores.some(x => x.id === s.id)) scores.push(s); if (!EXISTING.has('scores/' + s.id)) writes.push(w('scores', s.id, s, versions)); }
     for (const kind of new Set(L.map(l => l.kind))) {
       const pm = postmortem(d.idx, d.expiry, L.filter(l => l.kind === kind), d.settlement);
       pm.id = `${d.idx}-${kind}-${d.expiry}`; pm.kind = kind;
-      writes.push(w('postmortems', pm.id, pm, versions));
+      if (!EXISTING.has('postmortems/' + pm.id)) writes.push(w('postmortems', pm.id, pm, versions));
     }
     touched.add(d.idx);
   }
@@ -98,8 +107,9 @@ function settleCmd() {
     }
     for (const p of proposals(idx, mine, cfg, props, nowMs)) { props.push(p); writes.push(w('proposals', p.id, p, versions)); }
   }
+  writes.push(...outcomeWrites);
   writes.push(w('runs', String(nowMs), { runMs: nowMs, kind: 'settle', status: 'ok', settled: due.map(d => `${d.idx}-${d.expiry}`), applied: appliedIds }, versions));
-  writeBatches(arg('out'), writes);
+  finish(arg('out'), writes);
 }
 
 // Assemble state.json from an ArtifactData out_dir dump (<dir>/<collection>/<doc_id>.json) plus versions.json.
@@ -111,6 +121,7 @@ function stateCmd() {
     config: cfg ? (({ id, ...c }) => c)(cfg) : undefined,
     weights: byId(read('weights')), locks: read('locks'), outcomes: byId(read('outcomes')), scores: read('scores'), proposals: read('proposals'),
     versions: arg('versions') && fs.existsSync(arg('versions')) ? readJson(arg('versions')) : {},
+    existing: ['locks', 'outcomes', 'scores', 'proposals', 'weights', 'config', 'postmortems', 'analyst'].flatMap(col => read(col).map(x => `${col}/${x.id}`)),
   };
   fs.writeFileSync(arg('out'), JSON.stringify(state));
   console.log(`state: ${state.locks.length} locks, ${Object.keys(state.outcomes).length} outcomes, ${state.scores.length} scores, ${state.proposals.length} proposals, config ${cfg ? 'found' : 'default'}`);
