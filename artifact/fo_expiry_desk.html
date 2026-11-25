@@ -79,6 +79,22 @@ main { padding-block: 18px 40px; }
 .hero-sub { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; font-size: 13.5px; color: var(--hero-muted); }
 .hero-sub b { color: var(--hero-ink); font-weight: 600; }
 .delta { font-weight: 600; font-size: 12.5px; padding: 3px 10px; border-radius: 999px; background: var(--hero-rule); color: var(--hero-ink); }
+.scale { position: relative; height: 96px; margin-top: 14px; }
+.scale .track { position: absolute; left: 0; right: 0; top: 40px; height: 14px; border-radius: 7px; background: var(--hero-rule); }
+.scale .b90 { position: absolute; top: 0; height: 100%; background: rgba(227,182,100,.25); border-radius: 7px; }
+.scale .b68 { position: absolute; top: 0; height: 100%; background: rgba(227,182,100,.6); border-radius: 7px; }
+.scale .pin { position: absolute; transform: translateX(-50%); text-align: center; font-size: 11.5px; line-height: 1.25; white-space: nowrap; color: var(--hero-muted); }
+.scale .pin b { color: var(--hero-ink); font-size: 13px; }
+.scale .pin.exp { top: 0; } .scale .pin.exp::after { content: ""; display: block; width: 2px; height: 12px; margin: 2px auto 0; background: var(--hero-line); }
+.scale .pin.spot { top: 40px; } .scale .pin.spot::before { content: ""; display: block; width: 0; height: 22px; margin: 0 auto 2px; border-left: 2px dashed var(--hero-ink); }
+.xchips { display: flex; gap: 6px 8px; flex-wrap: wrap; margin-top: 4px; }
+.xchip { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--hero-rule); color: var(--hero-ink); background: var(--hero-rule); }
+.xchip.hot { background: var(--hero-line); color: #1b2333; border-color: var(--hero-line); font-weight: 600; }
+.ticker { display: flex; gap: 6px 18px; flex-wrap: wrap; align-items: baseline; font-size: 13px; }
+.ticker .tk { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; }
+.ticker .tk span { color: var(--band-muted); font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; }
+.ticker .tk b { font: 600 17px/1.1 var(--serif); color: var(--band-ink); }
+.ticker .up { color: var(--hero-pos); } .ticker .dn { color: var(--hero-neg); }
 .rangebar { position: relative; height: 34px; margin-top: 18px; }
 .rangebar .r90 { position: absolute; top: 11px; height: 12px; background: var(--hero-rule); border-radius: 6px; }
 .rangebar .r68 { position: absolute; top: 11px; height: 12px; background: rgba(227,182,100,.45); border-radius: 6px; }
@@ -122,6 +138,7 @@ footer { color: var(--muted); font-size: 12px; padding-block: 18px; }
   <div class="wrap">
     <div class="mast-top">
       <div class="brand"><h1>F&amp;O Expiry Desk</h1><span id="asof">Nifty weekly · Nifty monthly · Bank Nifty monthly</span></div>
+      <div class="ticker" id="ticker" aria-label="Index levels"></div>
       <div class="sp"></div>
       <span class="chip" id="status">Connecting to Kite…</span>
       <button class="chip" id="refresh" title="Fetch the option chain again from Kite">↻ Refresh</button>
@@ -343,7 +360,7 @@ function applyConfig(ws, cfg, idx) {
 /*ENGINE-END*/
 
 // ---------- connector + store
-const S = { mcp: null, db: null, panels: {}, locks: {}, outcomes: {}, weights: {}, tab: 'NIFTY-weekly', oiMode: {}, charts: {}, busy: false, err: null, dataMs: null };
+const S = { mcp: null, db: null, indices: {}, panels: {}, locks: {}, outcomes: {}, weights: {}, tab: 'NIFTY-weekly', oiMode: {}, charts: {}, busy: false, err: null, dataMs: null };
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 async function kite(args) {
@@ -376,7 +393,7 @@ async function dbAll(col) {
 async function dbSet(path, body) { if (!S.db) return false; try { await S.db.doc(path).set(body); return true; } catch (e) { return false; } }
 
 async function loadStore() {
-  for (const d of await dbAll('latest')) S.panels[d.id] = d;
+  for (const d of await dbAll('latest')) { if (d.id.startsWith('index-')) S.indices[d.id.slice(6)] = d; else S.panels[d.id] = d; }
   for (const d of await dbAll('locks')) S.locks[d.id] = d;
   for (const d of await dbAll('outcomes')) S.outcomes[d.id] = d;
   for (const d of await dbAll('weights')) S.weights[d.id] = d;
@@ -427,6 +444,9 @@ async function refreshUnderlying(u, now) {
   if (!head[u.spot] || !head[futId]) throw { code: 'no_quote', message: 'Kite returned no quote for ' + u.label + ' spot or futures' };
   const spot = parseQuote(head[u.spot]).ltp, fut = parseQuote(head[futId]).ltp, vix = head[VIX] ? parseQuote(head[VIX]).ltp : null;
   const spotTs = head[u.spot] && head[u.spot].timestamp;
+  const prevClose = head[u.spot] && head[u.spot].ohlc ? +head[u.spot].ohlc.close || null : null;
+  S.indices[u.name] = { label: u.label, spot, prevClose, vix, ms: Date.now() };
+  dbSet('latest/index-' + u.name, S.indices[u.name]);
   let hist = []; try { hist = await history(u, 12); } catch (e) { hist = []; }
   const past = hist.filter(c => c.date < now.date);
   const prevHLC = past.length ? [past[past.length - 1].high, past[past.length - 1].low, past[past.length - 1].close] : null;
@@ -501,6 +521,9 @@ function render() {
   const now = ist(), market = now.dow > 0 && now.dow < 6 && now.hm >= '09:15' && now.hm <= '15:30';
   if (S.err) setStatus(S.err.code === 'server_not_connected' || S.err.code === 'needs_reauth' ? 'Kite login needed' : S.err.code && ERR_COPY[S.err.code] ? 'Kite permission needed' : 'Problem loading ' + (S.err.where || 'data'), 'alert');
   else if (S.dataMs) setStatus((market ? 'Kite ✔ live · ' : 'Market closed · ') + 'data ' + tlabel(S.dataMs) + ' IST', market ? 'live' : '');
+  $('#ticker').innerHTML = UNDERLYINGS.map(u => { const t = S.indices[u.name] || (S.panels[u.name + '-monthly'] ? { spot: S.panels[u.name + '-monthly'].spot } : null); if (!t) return ''; const ch = t.prevClose ? (t.spot / t.prevClose - 1) * 100 : null;
+    return `<span class="tk"><span>${u.label}</span><b>${fmt(t.spot)}</b>${ch == null ? '' : `<em class="${ch >= 0 ? 'up' : 'dn'}" style="font-style:normal">${ch >= 0 ? '▲' : '▼'} ${Math.abs(ch).toFixed(2)}%</em>`}</span>`; }).join('')
+    + (() => { const v = (S.indices.NIFTY || {}).vix; return v ? `<span class="tk"><span>India VIX</span><b>${v.toFixed(2)}</b></span>` : ''; })();
   $('#asof').textContent = S.dataMs ? 'Updated ' + dtlabel(S.dataMs) + ' IST · refreshes every 5 min while open in market hours' : 'Nifty weekly · Nifty monthly · Bank Nifty monthly';
   $('#banner').innerHTML = S.err ? `<div class="banner bad">${esc(errText(S.err))}${Object.keys(S.panels).length ? ' Showing the last saved data below.' : ''}</div>` : '';
   Object.values(S.charts).forEach(c => c.destroy()); S.charts = {};
@@ -520,11 +543,14 @@ function panelView(p, now) {
   const pr = withOverlay(p), s = p.signals, stale = Date.now() - p.dataMs > 10 * 60e3 && now.hm >= '09:15' && now.hm <= '15:30' && now.dow > 0 && now.dow < 6;
   const lo = pr.band90 ? pr.band90[0] - 0.15 * (pr.band90[1] - pr.band90[0]) : p.spot * 0.97, hi = pr.band90 ? pr.band90[1] + 0.15 * (pr.band90[1] - pr.band90[0]) : p.spot * 1.03;
   const pos = x => clamp((x - lo) / (hi - lo) * 100, 0, 100);
-  const bar = pr.band68 ? `<div class="rangebar" aria-hidden="true">
-      <div class="r90" style="left:${pos(pr.band90[0])}%;width:${pos(pr.band90[1]) - pos(pr.band90[0])}%"></div>
-      <div class="r68" style="left:${pos(pr.band68[0])}%;width:${pos(pr.band68[1]) - pos(pr.band68[0])}%"></div>
-      <div class="mk" style="left:${pos(pr.centre)}%"></div><div class="sp" style="left:${pos(p.spot)}%" title="Spot"></div></div>
-      <div class="range-lab"><span>90%: ${fmt(pr.band90[0])} – ${fmt(pr.band90[1])}</span><span>gold mark = expected · dashed = spot ${fmt(p.spot)}</span></div>` : '';
+  const pinPos = x => clamp(pos(x), 9, 91);
+  const bar = pr.band68 ? `<div class="scale" role="img" aria-label="Expected ${fmt(pr.centre)}, spot ${fmt(p.spot)}, 68% range ${fmt(pr.band68[0])} to ${fmt(pr.band68[1])}">
+      <div class="pin exp" style="left:${pinPos(pr.centre)}%">Expected <b>${fmt(pr.centre)}</b></div>
+      <div class="track"><div class="b90" style="left:${pos(pr.band90[0])}%;width:${pos(pr.band90[1]) - pos(pr.band90[0])}%"></div>
+        <div class="b68" style="left:${pos(pr.band68[0])}%;width:${pos(pr.band68[1]) - pos(pr.band68[0])}%"></div></div>
+      <div class="pin spot" style="left:${pinPos(p.spot)}%">Spot now <b>${fmt(p.spot)}</b></div></div>
+      <div class="range-lab"><span><b style="color:var(--hero-ink)">68%</b> range ${fmt(pr.band68[0])} – ${fmt(pr.band68[1])} (gold band)</span><span><b style="color:var(--hero-ink)">90%</b> range ${fmt(pr.band90[0])} – ${fmt(pr.band90[1])} (faint band)</span></div>` : '';
+  const tdl = (() => { let n = 0; const d = new Date(now.date + 'T00:00:00Z'), e = new Date(p.expiry + 'T00:00:00Z'); while (d < e) { d.setUTCDate(d.getUTCDate() + 1); const w = d.getUTCDay(); if (w > 0 && w < 6) n++; } return n; })();
   const probs = Object.entries(pr.probs).map(([k, v]) => [+k, v]).sort((a, b) => b[0] - a[0]);
   const locks = Object.values(S.locks).filter(l => l.key === p.key && l.expiry === p.expiry).sort((a, b) => b.madeAt - a.madeAt);
   const delta = (pr.centre - p.spot) / p.spot * 100;
@@ -532,10 +558,11 @@ function panelView(p, now) {
   ${stale ? `<div class="banner">This data is from ${tlabel(p.dataMs)} IST, more than 10 minutes old. Press Refresh.</div>` : ''}
   <section class="hero">
     <div class="hero-main">
-      <div class="eyebrow">${esc(p.label)} ${KIND[p.kind]} · expiry ${dlabel(p.expiry)} · ${BUCKET[p.bucket]}</div>
+      <div class="eyebrow">${esc(p.label)} ${KIND[p.kind]} contract</div>
+      <div class="xchips"><span class="xchip hot">Expiry ${dlabel(p.expiry)}</span><span class="xchip">${tdl === 0 ? 'Expires today' : tdl + ' trading day' + (tdl === 1 ? '' : 's') + ' left'}</span><span class="xchip">Spot ${fmt(p.spot)}</span></div>
       <div class="hero-num">${fmt(pr.centre)}</div>
       <div class="hero-sub"><span>Expected settlement</span><span class="delta">${delta >= 0 ? '+' : ''}${delta.toFixed(2)}% vs spot</span>
-        ${pr.band68 ? `<span>68% range <b>${fmt(pr.band68[0])} – ${fmt(pr.band68[1])}</b></span>` : ''}</div>
+</div>
       ${bar}
       ${ovNote(pr)}
       <p class="hero-note">${pr.note ? esc(pr.note.charAt(0).toUpperCase() + pr.note.slice(1)) + '. ' : ''}Data ${tlabel(p.dataMs)} IST${p.spotTs ? '' : ''}. Weights: ${esc(pr.source === 'prior' ? 'starting guesses' : pr.source === 'live' ? 'learned from settled expiries' : pr.source)}.</p>

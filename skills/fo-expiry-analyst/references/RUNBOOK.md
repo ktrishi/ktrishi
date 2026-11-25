@@ -81,7 +81,9 @@ Do this for **NIFTY** (step 50; kinds weekly and monthly) and **BANKNIFTY** (ste
    - **High** means it can move the index more than 1% before the expiry: an RBI policy decision, a US FOMC or CPI release, the Union Budget, election results, or a large bank's results for Bank Nifty.
    - Only events on or before the contract's expiry count for that contract.
 4. **Overlays**, one per contract key (`NIFTY-weekly`, `NIFTY-monthly`, `BANKNIFTY-monthly`):
-   - `bandMult` = 1.0, +0.1 if a medium event falls before expiry, +0.2 if a high event does. Maximum: `config.eventBandMax` from `$W/state.json` (1.3 unless Rishi approved a change); if it is above 1.3, a high event adds up to that maximum.
+   - `bandMult` starts at 1.0. Option prices already include **scheduled** events (RBI policy, Fed, US inflation, GDP, results dates), so widening for them double-counts.
+     - Scheduled events before expiry: at most **1.05** in total, with the reason "scheduled, mostly priced".
+     - **Unscheduled** risk the options cannot have priced yet: up to `config.eventBandMax` from `$W/state.json` (1.3 unless Rishi approved a change). Examples are a shock after the market closed, a sudden policy or geopolitical surprise, or a sharp break in news flow since the last close. Name the evidence.
    - `nudgeSigma` = 0 by default. Use ±0.1 to ±0.25 only with clear directional evidence not already in prices, and say what it is.
    - `reasons`: short phrases naming each event or piece of evidence.
 5. **Notes.** Two or three plain sentences for Rishi: what matters this week and why. Add `sources`: the URLs used.
