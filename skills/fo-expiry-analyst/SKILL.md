@@ -51,6 +51,7 @@ Why the run is built this way:
 ## Overlay rules (the analyst's judgement layer)
 - **Ranges.** You may widen the model's range up to `config.eventBandMax`, and move the centre by up to `config.nudgeCapSigma` × σ (0.25σ by default). Always give written reasons.
 - **Events.** Option volatility already prices scheduled events: RBI policy, the Fed, US inflation data and GDP. Be sparing about widening for them. Widen meaningfully only for risk the options cannot have priced yet, such as a shock after the market closed or a sudden change in news flow.
+- **Event dates.** Confirm every high- or medium-impact event date on the official source (MoSPI, RBI, BLS, BEA, the Fed, exchange filings) before listing it. Mark anything you cannot confirm "(date unconfirmed)" and treat it as one impact level lower.
 - **Centre.** Leave the nudge at 0 unless you have clear directional evidence that prices have not absorbed.
 - **Every lock is scored three ways:** the model, the model plus overlay, and the futures-implied level. If the overlay stops adding value, the analyst proposes removing it. That is the point of the design.
 

@@ -81,6 +81,16 @@ Do this for **NIFTY** (step 50; kinds weekly and monthly) and **BANKNIFTY** (ste
 3. **Events.** Build `events`: up to 8 items `{title, when, impact: high|medium|low, source}`.
    - **High** means it can move the index more than 1% before the expiry: an RBI policy decision, a US FOMC or CPI release, the Union Budget, election results, or a large bank's results for Bank Nifty.
    - Only events on or before the contract's expiry count for that contract.
+   - **Verify every high- or medium-impact date against the official source before listing it**, because news articles often get release dates wrong:
+     - India GDP and CPI: MoSPI (mospi.gov.in) release calendar
+     - RBI policy: rbi.org.in
+     - US CPI and jobs data: bls.gov schedule
+     - US PCE and GDP: bea.gov
+     - FOMC: federalreserve.gov
+     - Company results: the exchange filing or the company's board-meeting notice
+   - Search with `site:` on that domain, or scrape the calendar page. Put the official page's URL in the event's `source`.
+   - If you cannot confirm a date officially, add " (date unconfirmed)" to the title and treat the event as one impact level lower.
+   - If this run's verified date differs from the date in `analyst/latest`, say so in `notes`.
 4. **Overlays**, one per contract key (`NIFTY-weekly`, `NIFTY-monthly`, `BANKNIFTY-monthly`):
    - `bandMult` starts at 1.0. Option prices already include **scheduled** events (RBI policy, Fed, US inflation, GDP, results dates), so widening for them double-counts.
      - Scheduled events before expiry: at most **1.05** in total, with the reason "scheduled, mostly priced".
