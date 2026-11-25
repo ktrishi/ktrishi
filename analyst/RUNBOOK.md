@@ -68,6 +68,7 @@ Do this for **NIFTY** (step 50; kinds weekly and monthly) and **BANKNIFTY** (ste
    ```
    - `prevHLC` and `close3` come from the step 3 candles, using only candles dated before today: `prevHLC` is the last of them, and `close3` is the close of the third-last of them. In the afternoon run, fetch them the same way if you skipped step 3.
    - Copy numbers exactly. The CLI rejects duplicate strikes, negative OI, a spot outside the window, and futures more than 3% from spot.
+   - **Preferred:** large quote results are usually saved to a file (the tool says "Output has been saved to …"). Build `rows` from those files with `node $R/analyst/chain_from_quotes.js --prefix NFO:<prefix> --out $W/<name>.json <saved file>`. It is exact and saves copying numbers by hand.
 
 ## 5. Events and overlay (Firecrawl `firecrawl_search` and the cm-market tools)
 1. **Searches.** Run 3 or 4 searches, with `sources: ["news"]` where helpful:
