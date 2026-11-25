@@ -108,6 +108,9 @@ button.lad-row:hover { background: var(--surface2); }
 .lad-bar .l90 { background: var(--g90); } .lad-bar .l68 { background: var(--g68); }
 .lad-bar .lexp { width: 4px; top: -5px; height: 26px; border-radius: 2px; background: var(--ink); transform: translateX(-50%); }
 .lad-bar .lspot { width: 0; top: -9px; height: 34px; border-radius: 0; border-left: 2px dashed var(--muted); }
+.lad-bar.lab { margin-block: 20px 22px; }
+.lad-bar .le { position: absolute; transform: translateX(-50%); font-size: 10.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lad-bar .le90 { top: -19px; color: var(--muted); } .lad-bar .le68 { top: 19px; color: var(--accent); font-weight: 600; }
 .lad-axis { position: relative; height: 16px; }
 .lad-axis span { position: absolute; transform: translateX(-50%); font-size: 10.5px; color: var(--muted); white-space: nowrap; }
 @media (max-width: 620px) { .lad-row { grid-template-columns: minmax(0, 1fr) auto; } .lad-bar, .lad-axis { grid-column: 1 / -1; order: 3; } .lad-row.axis > span:not(.lad-axis) { display: none; } }
@@ -582,11 +585,13 @@ function ladderView(u, now, selKey) {
   const ticks = []; for (let t = Math.ceil(lo / st) * st; t <= hi; t += st) if (pos(t) > 3 && pos(t) < 97) ticks.push(t);
   const spot = rows[0].p.spot;
   return `<section class="card ladder"><h3>${u.label}: every expiry on one scale</h3>
-    <div class="sub">Black mark = expected settlement, gold = 68% range, faint gold = 90% range, dashed line = spot ${fmt(spot)}. Click a row to see that expiry in detail below.</div>
+    <div class="sub">Black mark = expected settlement. Gold band = 68% range (gold numbers below each bar); faint band = 90% range (grey numbers above). Dashed line = spot ${fmt(spot)}. Click a row to see that expiry in detail below.</div>
     <div class="lad-row axis"><span></span><span class="lad-axis">${ticks.map(t => `<span style="left:${pos(t)}%">${fmt(t)}</span>`).join('')}</span><span></span></div>
     ${rows.map(({ p, pr }) => { const d = tradingDaysLeft(now.date, p.expiry); return `<button type="button" class="lad-row${p.key === selKey ? ' on' : ''}" data-key="${p.key}" aria-pressed="${p.key === selKey}">
       <span class="lad-lab"><b>${dlabel(p.expiry)}</b><small>${KIND[p.kind]} · ${d === 0 ? 'expires today' : d + ' trading day' + (d === 1 ? '' : 's')}</small></span>
-      <span class="lad-bar">${pr.band90 ? `<i class="l90" style="left:${pos(pr.band90[0])}%;width:${pos(pr.band90[1]) - pos(pr.band90[0])}%"></i><i class="l68" style="left:${pos(pr.band68[0])}%;width:${pos(pr.band68[1]) - pos(pr.band68[0])}%"></i>` : ''}
+      <span class="lad-bar${pr.band90 ? ' lab' : ''}">${pr.band90 ? `<i class="l90" style="left:${pos(pr.band90[0])}%;width:${pos(pr.band90[1]) - pos(pr.band90[0])}%"></i><i class="l68" style="left:${pos(pr.band68[0])}%;width:${pos(pr.band68[1]) - pos(pr.band68[0])}%"></i>
+        <span class="le le90" style="left:${clamp(pos(pr.band90[0]), 4, 96)}%">${fmt(pr.band90[0])}</span><span class="le le90" style="left:${clamp(pos(pr.band90[1]), 4, 96)}%">${fmt(pr.band90[1])}</span>
+        <span class="le le68" style="left:${clamp(pos(pr.band68[0]), 4, 96)}%">${fmt(pr.band68[0])}</span><span class="le le68" style="left:${clamp(pos(pr.band68[1]), 4, 96)}%">${fmt(pr.band68[1])}</span>` : ''}
         <i class="lspot" style="left:${pos(spot)}%"></i><i class="lexp" style="left:${pos(pr.centre)}%" title="Expected ${fmt(pr.centre)}"></i></span>
       <span class="lad-val"><b>${fmt(pr.centre)}</b><small>${pr.band68 ? `68% ${fmt(pr.band68[0])}–${fmt(pr.band68[1])}` : 'no range'}</small></span></button>`; }).join('')}
   </section>`;
