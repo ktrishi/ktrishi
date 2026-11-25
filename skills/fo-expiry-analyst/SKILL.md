@@ -1,6 +1,6 @@
 ---
 name: fo-expiry-analyst
-description: Runs and explains Rishi's F&O Expiry Analyst — the self-correcting predictor of where Nifty weekly, Nifty monthly and Bank Nifty monthly will settle on expiry day, which writes into the "F&O Expiry Desk" artifact (claude.ai/artifact/GbTkBwUEMhr34yuFMFs26V). Use this skill whenever Rishi asks to run, refresh or re-lock the expiry analyst or expiry predictions, settle or score an expiry, write or read a post-mortem, check the analyst's track record, review or apply proposed model changes, explain why a Nifty or Bank Nifty expiry prediction moved, or whenever the scheduled "F&O Analyst" task fires — even if he only says "update the F&O desk", "what's the expiry view" or "how did the model do this week".
+description: Runs and explains Rishi's F&O Expiry Analyst — the self-correcting predictor of where Nifty (current, next and third weekly, and monthly) and Bank Nifty monthly will settle on expiry day, which writes into the "F&O Expiry Desk" artifact (claude.ai/artifact/GbTkBwUEMhr34yuFMFs26V). Use this skill whenever Rishi asks to run, refresh or re-lock the expiry analyst or expiry predictions, settle or score an expiry, write or read a post-mortem, check the analyst's track record, review or apply proposed model changes, explain why a Nifty or Bank Nifty expiry prediction moved, or whenever the scheduled "F&O Analyst" task fires — even if he only says "update the F&O desk", "what's the expiry view" or "how did the model do this week".
 ---
 
 # F&O Expiry Analyst

@@ -82,3 +82,16 @@ test('settle writes outcomes last and asks for missing versions instead of writi
   const cols = entries.map(e => e.collection);
   assert.ok(cols.lastIndexOf('outcomes') > cols.lastIndexOf('scores') && cols.lastIndexOf('outcomes') > cols.lastIndexOf('weights'));
 });
+
+test('lock command carries the run cache into analyst/latest', () => {
+  const d = tmp(), ch = sampleChain(loadEngine(HTML));
+  fs.writeFileSync(path.join(d, 'input.json'), JSON.stringify({ nowMs: ch.takenMs, slot: '09:40', chains: [{ ...ch, kind: 'weekly2' }], overlays: {}, events: [],
+    cache: { expiries: { NIFTY: ['2026-11-23'] }, eventsCheckedMs: 1 } }));
+  fs.writeFileSync(path.join(d, 'state.json'), '{}');
+  execFileSync('node', [RUN, 'lock', '--input', path.join(d, 'input.json'), '--state', path.join(d, 'state.json'), '--out', d]);
+  const entries = JSON.parse(fs.readFileSync(path.join(d, 'batch-1.json'), 'utf8'));
+  const latest = JSON.parse(fs.readFileSync(entries.find(e => e.collection === 'analyst').file_path, 'utf8'));
+  assert.deepEqual(latest.cache.expiries.NIFTY, ['2026-11-23']);
+  assert.ok(latest.overlays['NIFTY-weekly2']);
+  assert.ok(entries.find(e => e.doc_id.startsWith('NIFTY-weekly2-')));
+});

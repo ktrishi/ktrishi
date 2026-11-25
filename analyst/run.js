@@ -62,6 +62,8 @@ function lockCmd() {
     runMs: input.nowMs, slot: input.slot, events: input.events || [], notes: input.notes || '',
     overlays: Object.fromEntries(made.map(l => [l.key, { expiry: l.expiry, ...l.overlay, centre: l.centre, modelCentre: l.modelCentre, band68: l.band68, modelBand68: l.modelBand68 }])),
     sources: input.sources || [],
+    // reusable context (expiry list, verified event calendar, candles) so later runs can skip refetching it
+    cache: input.cache || null,
   }, versions));
   writes.push(w('runs', String(input.nowMs), { runMs: input.nowMs, kind: 'lock', slot: input.slot, status: 'ok', locks: made.map(l => l.id) }, versions));
   finish(arg('out'), writes);

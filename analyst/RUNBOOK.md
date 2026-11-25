@@ -45,33 +45,47 @@ You are the scheduled analyst for Rishi's F&O Expiry Desk. Follow these steps ex
 7. Rebuild state, as in step 1, so the lock step sees new weights and config.
 
 ## 4. Pull the option chains (Kite `market` tool)
-Do this for **NIFTY** (step 50; kinds weekly and monthly) and **BANKNIFTY** (step 100; kind monthly).
+Contracts:
+- **NIFTY** (step 50): kinds `weekly`, `weekly2`, `weekly3` and `monthly`.
+- **BANKNIFTY** (step 100): kind `monthly`.
 
-1. **Expiries.** Call `mode: "option_chain"` with `underlying`, `limit: 1`. From `expiries`, keep the live ones: later than today, or today before 15:30.
-   - **weekly** = the first live expiry. NIFTY only.
-   - **monthly** = the last live expiry in the same calendar month as the first live one.
-2. **Futures.** Call `option_chain` with `expiry` = monthly and `limit: 1`. Take `future.id` and `future.expiry_date`, which is `futExpiry`.
-   - If `future` is null, try the next live expiries, in order, until one has a future.
-   - Also note `strikes[0].call.tradingsymbol`. It is `<prefix><strike>CE`, where the prefix is like `NIFTY26DEC`.
-3. **Weekly prefix.** For the weekly expiry, call `option_chain` with that `expiry` and `limit: 1` to learn its prefix, like `NIFTY26D01`.
-4. **Head quote.** Call `mode: "quote"` with `instruments: [spot, "NSE:INDIA VIX", future.id]`.
-   - spot: `NSE:NIFTY 50` or `NSE:NIFTY BANK`
-   - Record `spot`, `future` and `vix` as last prices, and `takenMs` = now in epoch ms.
-5. **Strike window.** Every multiple of the step within ±3% of spot.
-6. **Option quotes.** One `mode: "quote"` call per expiry, with `NFO:<prefix><strike>CE` and `...PE` for every strike in the window.
-   - Note any `missing_instruments`; skip those strikes.
-7. **Chain file.** Write one object per contract to `$W/input.json` → `chains` (the NIFTY monthly chain reuses its quotes if weekly = monthly):
+Keep tokens low: large tool results are saved to a file instead of entering the conversation, so make **one big quote call** and parse the file.
+
+1. **Expiries.**
+   - If `cache.expiries` in `$W/dump/analyst/latest.json` was saved today, reuse it.
+   - Otherwise call `mode: "option_chain"`, `underlying`, `limit: 1` once per index and keep `expiries`.
+   - Keep only the live expiries: later than today, or today before 15:30.
+   - NIFTY: `weekly` / `weekly2` / `weekly3` = the 1st / 2nd / 3rd live expiry. `monthly` = the last live expiry in the same calendar month as the first one.
+   - BANKNIFTY: `monthly` = its first live expiry.
+2. **Symbol prefixes** (build them; no extra calls). `YY` = the two-digit year.
+   - An expiry that is the **last expiry of its calendar month** (a monthly) uses `NFO:<NAME><YY><MON>`, with `MON` = JAN…DEC. Example: `NFO:NIFTY26DEC`.
+   - Any other weekly uses `NFO:NIFTY<YY><M><DD>`, with `M` = 1–9 for Jan–Sep and O, N, D for Oct, Nov, Dec. Example: `NFO:NIFTY26D08` for 8-Dec-2026.
+   - Futures: `NFO:<NAME><YY><MON>FUT` of the monthly expiry; `futExpiry` = the monthly expiry.
+3. **Head quote.** Make one `mode: "ltp"` call with both spots (`NSE:NIFTY 50`, `NSE:NIFTY BANK`), `NSE:INDIA VIX` and both futures.
+   - Record `spot`, `future` and `vix`, and `takenMs` = now in epoch ms.
+   - If a future symbol is missing, the prefix rule failed. Then call `option_chain` with that `expiry`, `limit: 1`, and use `future.id`.
+4. **Strike window.** Every multiple of the step within ±3% of spot.
+5. **Option quotes: one call for everything.**
+   - Make one `mode: "quote"` call with `<prefix><strike>CE` and `...PE` for every distinct expiry's window, under 500 instruments in total.
+   - It is too large to show, so it is saved to a file; do not read that file into the conversation.
+   - If `missing_instruments` lists a whole expiry, its prefix is wrong. Check it with one `option_chain` call (`limit: 1`, read `strikes[0].call.tradingsymbol`), then re-quote only that expiry.
+6. **Chain file.** Build each contract's `rows` from the saved file:
+   `node $R/analyst/chain_from_quotes.js --prefix <prefix> --out $W/<key>.json <saved file>`
+   Then write one object per contract to `$W/input.json` → `chains`:
    ```json
-   {"idx":"NIFTY","kind":"weekly","expiry":"YYYY-MM-DD","futExpiry":"YYYY-MM-DD","takenMs":<ms>,"spot":n,"future":n,"vix":n,"step":50,
-    "prevHLC":[high,low,close],"close3":n,
-    "rows":[{"strike":k,"ce_oi":n,"ce_ltp":n,"pe_oi":n,"pe_ltp":n}, ...]}
+   {"idx":"NIFTY","kind":"weekly2","expiry":"YYYY-MM-DD","futExpiry":"YYYY-MM-DD","takenMs":<ms>,"spot":n,"future":n,"vix":n,"step":50,
+    "prevHLC":[high,low,close],"close3":n,"rows":<contents of $W/<key>.json>}
    ```
-   - `prevHLC` and `close3` come from the step 3 candles, using only candles dated before today: `prevHLC` is the last of them, and `close3` is the close of the third-last of them. In the afternoon run, fetch them the same way if you skipped step 3.
-   - Copy numbers exactly. The CLI rejects duplicate strikes, negative OI, a spot outside the window, and futures more than 3% from spot.
-   - **Preferred:** large quote results are usually saved to a file (the tool says "Output has been saved to …"). Build `rows` from those files with `node $R/analyst/chain_from_quotes.js --prefix NFO:<prefix> --out $W/<name>.json <saved file>`. It is exact and saves copying numbers by hand.
+   - If two kinds share an expiry (for example `weekly3` = `monthly`), both reuse the same rows.
+   - `prevHLC` and `close3` come from the step 3 candles, using only candles dated before today: `prevHLC` is the last of them, and `close3` is the close of the third-last.
+   - The afternoon run reuses `cache.candles` from the morning instead of fetching them again.
 
 ## 5. Events and overlay (Firecrawl `firecrawl_search` and the cm-market tools)
-1. **Searches.** Run 3 or 4 searches, with `sources: ["news"]` where helpful:
+0. **Afternoon run, light mode.** Reuse the morning's `events` and verified dates from `$W/dump/analyst/latest.json`, and run **one** news search for anything unscheduled since the morning. Do the full research below only if:
+   - Nifty or Bank Nifty has moved more than 1% since the morning lock, or
+   - that search finds a new market-moving story.
+
+1. **Searches** (morning run). Run 3 or 4 searches, with `sources: ["news"]` where helpful:
    - "Nifty Bank Nifty market news today"
    - "India economic calendar this week RBI" plus the week's dates
    - "US Fed CPI jobs data this week"
@@ -91,7 +105,7 @@ Do this for **NIFTY** (step 50; kinds weekly and monthly) and **BANKNIFTY** (ste
    - Search with `site:` on that domain, or scrape the calendar page. Put the official page's URL in the event's `source`.
    - If you cannot confirm a date officially, add " (date unconfirmed)" to the title and treat the event as one impact level lower.
    - If this run's verified date differs from the date in `analyst/latest`, say so in `notes`.
-4. **Overlays**, one per contract key (`NIFTY-weekly`, `NIFTY-monthly`, `BANKNIFTY-monthly`):
+4. **Overlays**, one per contract key (`NIFTY-weekly`, `NIFTY-weekly2`, `NIFTY-weekly3`, `NIFTY-monthly`, `BANKNIFTY-monthly`). Each contract counts only the events on or before its own expiry:
    - `bandMult` starts at 1.0. Option prices already include **scheduled** events (RBI policy, Fed, US inflation, GDP, results dates), so widening for them double-counts.
      - Scheduled events before expiry: at most **1.05** in total, with the reason "scheduled, mostly priced".
      - **Unscheduled** risk the options cannot have priced yet: up to `config.eventBandMax` from `$W/state.json` (1.3 unless Rishi approved a change). Examples are a shock after the market closed, a sudden policy or geopolitical surprise, or a sharp break in news flow since the last close. Name the evidence.
@@ -100,8 +114,10 @@ Do this for **NIFTY** (step 50; kinds weekly and monthly) and **BANKNIFTY** (ste
 5. **Notes.** Two or three plain sentences for Rishi: what matters this week and why. Add `sources`: the URLs used.
 6. Complete `$W/input.json`:
    ```json
-   {"nowMs":<ms>,"slot":"09:40","chains":[...],"events":[...],"overlays":{...},"notes":"...","sources":[...]}
+   {"nowMs":<ms>,"slot":"09:40","chains":[...],"events":[...],"overlays":{...},"notes":"...","sources":[...],
+    "cache":{"date":"YYYY-MM-DD","expiries":{"NIFTY":[...],"BANKNIFTY":[...]},"candles":{"NIFTY":{"prevHLC":[...],"close3":n},"BANKNIFTY":{...}},"eventsVerifiedMs":<ms>}}
    ```
+   `cache` lets the next run skip refetching what does not change within a day.
 
 ## 6. Lock and write
 1. Run `node $R/analyst/run.js lock --input $W/input.json --state $W/state.json --out $W/lock`.
