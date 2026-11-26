@@ -124,6 +124,7 @@ button.lad-row:hover { background: var(--surface2); }
 .ticker .tk span { color: var(--band-muted); font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; }
 .ticker .tk b { font: 600 17px/1.1 var(--serif); color: var(--band-ink); }
 .ticker .up { color: var(--hero-pos); } .ticker .dn { color: var(--hero-neg); }
+.card .up, .kpi .up { color: var(--good); } .card .dn, .card .down { color: var(--bad); }
 .rangebar { position: relative; height: 34px; margin-top: 18px; }
 .rangebar .r90 { position: absolute; top: 11px; height: 12px; background: var(--hero-rule); border-radius: 6px; }
 .rangebar .r68 { position: absolute; top: 11px; height: 12px; background: rgba(227,182,100,.45); border-radius: 6px; }
@@ -149,6 +150,24 @@ tr:last-child td { border-bottom: 0; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
 .seg button { border: 0; background: transparent; padding: 4px 10px; font-size: 12px; color: var(--muted); }
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.tbsel { flex-wrap: wrap; } .tbsel button { padding: 6px 12px; font-size: 12.5px; }
+tr.hl td { background: var(--surface2); font-weight: 600; }
+.nc { text-transform: none; }
+.tdrow { display: grid; grid-template-columns: 230px 170px minmax(0, 1fr); gap: 6px 16px; padding: 11px 0; border-top: 1px solid var(--line); align-items: start; }
+.tdrow small { display: block; font-size: 12px; margin-top: 3px; }
+@media (max-width: 720px) { .tdrow { grid-template-columns: minmax(0, 1fr) auto; } .tdw { grid-column: 1 / -1; } }
+.tradeline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 14px; font-size: 13.5px; }
+.linkbtn { border: 0; background: transparent; color: var(--accent); font-weight: 600; padding: 0; margin-left: auto; }
+.rbar { position: relative; height: 22px; border-radius: 11px; background: var(--surface2); margin: 34px 0 30px; }
+.rbar i { position: absolute; top: 0; height: 100%; border-radius: 11px; }
+.r10, .range-key .r10 { background: var(--g90); } .r20, .range-key .r20 { background: rgba(154,107,28,.32); } .r30, .range-key .r30 { background: var(--g68); }
+.rbar .rmid { width: 3px; top: -5px; height: 32px; background: var(--ink); border-radius: 2px; transform: translateX(-50%); }
+.rbar .rspot { width: 0; top: -8px; height: 38px; border-left: 2px dashed var(--muted); border-radius: 0; }
+.rq { position: absolute; transform: translateX(-50%); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--muted); }
+.rq.top { top: -19px; } .rq.bot { top: 26px; }
+.range-key { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.range-key i { display: inline-block; width: 14px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.range-key i.rmid { width: 3px; height: 12px; background: var(--ink); } .range-key i.rspot { width: 0; height: 12px; border-left: 2px dashed var(--muted); border-radius: 0; }
 .log { display: grid; gap: 0; max-height: 300px; overflow: auto; }
 .log > div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; }
 .log > div:first-child { border-top: 0; }
@@ -545,10 +564,23 @@ function tradeBands({ rows, F, T, closes, highEvent, idx, cfg, paperN }) {
   return { F, T, smile: { atm: smile.atm, flat: smile.flat, n: smile.n }, regime, fair, sd: bf.sd, costPts: bf.costPts, lot: bf.lot,
     condor: bf.condor, strangle: bf.strangle, range: rangeView(bf.grid), verdicts, today: { structure: pick, ...verdicts[pick] } };
 }
+// An event counts for a contract only if it falls on or before that expiry; an undated event counts (the cautious reading).
+function eventBefore(e, expiry) { const d = String((e && e.when) || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d <= expiry : true; }
+// Daily closes saved by the page in latest/hist-<IDX>; older than 4 calendar days counts as missing (fair volatility = implied).
+function closesFor(history, idx, today) {
+  const h = history && history[idx];
+  if (!h || !Array.isArray(h.closes) || !h.asOf) return null;
+  return (Date.parse(today) - Date.parse(String(h.asOf).slice(0, 10))) / 864e5 <= 4 ? h.closes : null;
+}
+// Settled paper trades the verdict did not reject, per structure: the count that unlocks a TRADE verdict.
+function paperCounts(tradeScores, idx) {
+  const mine = (tradeScores || []).filter(s => s.idx === idx);
+  return { condor: mine.filter(s => s.condor && s.condor.taken).length, strangle: mine.filter(s => s.strangle && s.strangle.taken).length };
+}
 /*ENGINE-END*/
 
 // ---------- connector + store
-const S = { mcp: null, db: null, indices: {}, panels: {}, locks: {}, outcomes: {}, weights: {}, tab: 'NIFTY', sel: {}, oiMode: {}, charts: {}, busy: false, err: null, dataMs: null };
+const S = { mcp: null, db: null, indices: {}, panels: {}, locks: {}, outcomes: {}, weights: {}, hist: {}, trades: [], tradescores: [], tab: 'today', tbSel: null, sel: {}, oiMode: {}, charts: {}, busy: false, err: null, dataMs: null };
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 async function kite(args) {
@@ -581,7 +613,9 @@ async function dbAll(col) {
 async function dbSet(path, body) { if (!S.db) return false; try { await S.db.doc(path).set(body); return true; } catch (e) { return false; } }
 
 async function loadStore() {
-  for (const d of await dbAll('latest')) { if (d.id.startsWith('index-')) S.indices[d.id.slice(6)] = d; else S.panels[d.id] = d; }
+  for (const d of await dbAll('latest')) { if (d.id.startsWith('index-')) S.indices[d.id.slice(6)] = d; else if (d.id.startsWith('hist-')) S.hist[d.id.slice(5)] = d; else S.panels[d.id] = d; }
+  S.trades = await dbAll('trades');
+  S.tradescores = await dbAll('tradescores');
   for (const d of await dbAll('locks')) S.locks[d.id] = d;
   for (const d of await dbAll('outcomes')) S.outcomes[d.id] = d;
   for (const d of await dbAll('weights')) S.weights[d.id] = d;
@@ -612,6 +646,17 @@ async function history(u, days) {
   const now = ist(), from = ist(Date.now() - days * 864e5).date;
   return candleRows(await kite({ mode: 'historical', instrument_token: u.token, interval: 'day', from_date: from, to_date: now.date }));
 }
+// ~300 daily closes, fetched once a day and shared with the analyst through latest/hist-<IDX> (realised volatility, trend filter).
+async function dailyHistory(u, now) {
+  const h = S.hist[u.name];
+  if (h && h.fetchedDate === now.date && Array.isArray(h.closes)) return h;
+  const c = (await history(u, 450)).filter(x => x.date < now.date && x.close > 0);
+  if (!c.length) return h || null;
+  const L = c[c.length - 1];
+  const doc = { asOf: L.date, fetchedDate: now.date, closes: c.slice(-300).map(x => x.close), prevHLC: [L.high, L.low, L.close], close3: c.length >= 3 ? c[c.length - 3].close : null };
+  S.hist[u.name] = doc; dbSet('latest/hist-' + u.name, doc);
+  return doc;
+}
 async function chainFor(u, expiry) {
   const oc = await kite({ mode: 'option_chain', underlying: u.name, expiry, limit: 500 });
   return { strikes: oc.strikes || [], future: oc.future || null, expiries: oc.expiries || [] };
@@ -636,11 +681,11 @@ async function refreshUnderlying(u, now) {
   const prevClose = head[u.spot] && head[u.spot].ohlc ? +head[u.spot].ohlc.close || null : null;
   S.indices[u.name] = { label: u.label, spot, prevClose, vix, ms: Date.now() };
   dbSet('latest/index-' + u.name, S.indices[u.name]);
-  let hist = []; try { hist = await history(u, 12); } catch (e) { hist = []; }
-  const past = hist.filter(c => c.date < now.date);
-  const prevHLC = past.length ? [past[past.length - 1].high, past[past.length - 1].low, past[past.length - 1].close] : null;
-  const close3 = past.length >= 3 ? past[past.length - 3].close : null;
-  const lo = spot * 0.97, hi = spot * 1.03; // same ±3% window as the analyst, so both compute the same signals
+  let H = null; try { H = await dailyHistory(u, now); } catch (e) { H = S.hist[u.name] || null; }
+  const prevHLC = H && H.prevHLC || null, close3 = H && H.close3 || null;
+  const closes = closesFor(S.hist, u.name, now.date);
+  // ±7% for trade bands (wings sit well outside the money); signals still use ±3%, exactly as the analyst
+  const lo = spot * 0.93, hi = spot * 1.07;
   const chains = {};
   for (const exp of new Set(Object.values(exps))) {
     const ch = exp === monthly ? mch : await chainFor(u, exp);
@@ -657,12 +702,18 @@ async function refreshUnderlying(u, now) {
     const prevPanel = S.panels[key];
     const oiPrev = prevPanel && prevPanel.expiry === exp && prevPanel.oiClose && prevPanel.oiCloseDate < now.date ? prevPanel.oiClose
       : prevPanel && prevPanel.expiry === exp ? prevPanel.oiPrevClose || null : null;
-    const sig = computeSignals(snap, oiPrev, prevHLC, close3);
+    const sigSnap = { ...snap, options: snap.options.filter(o => o.strike >= spot * 0.97 && o.strike <= spot * 1.03) };
+    const sig = computeSignals(sigSnap, oiPrev, prevHLC, close3);
     const bucket = dteBucket(now.date, exp);
     const pred = predict(sig, applyConfig(weightSet(u.name, bucket), S.config, u.name), bucket);
-    const oiNow = Object.fromEntries(snap.options.map(o => [o.strike + '|' + o.type, o.oi]));
-    const strikes = [...new Set(snap.options.map(o => o.strike))].sort((a, b) => a - b).filter(k => k >= spot * 0.97 && k <= spot * 1.03);
-    const ce = Object.fromEntries(snap.options.filter(o => o.type === 'CE').map(o => [o.strike, o.oi])), pe = Object.fromEntries(snap.options.filter(o => o.type === 'PE').map(o => [o.strike, o.oi]));
+    const oiNow = Object.fromEntries(sigSnap.options.map(o => [o.strike + '|' + o.type, o.oi]));
+    const strikes = [...new Set(sigSnap.options.map(o => o.strike))].sort((a, b) => a - b);
+    const ce = Object.fromEntries(sigSnap.options.filter(o => o.type === 'CE').map(o => [o.strike, o.oi])), pe = Object.fromEntries(sigSnap.options.filter(o => o.type === 'PE').map(o => [o.strike, o.oi]));
+    const wide = new Map(); for (const o of snap.options) { const r = wide.get(o.strike) || { strike: o.strike, ce_ltp: 0, pe_ltp: 0, ce_oi: 0, pe_oi: 0 }; r[o.type === 'CE' ? 'ce_ltp' : 'pe_ltp'] = o.ltp; r[o.type === 'CE' ? 'ce_oi' : 'pe_oi'] = o.oi; wide.set(o.strike, r); }
+    const highEvent = ((S.analyst && S.analyst.events) || []).some(e => e.impact === 'high' && eventBefore(e, exp));
+    let bands;
+    try { bands = { ...tradeBands({ rows: [...wide.values()].sort((a, b) => a.strike - b.strike), F: sig.forward, T: yearFrac(snap.takenMs, exp), closes, highEvent, idx: u.name, cfg: S.config, paperN: paperCounts(S.tradescores, u.name) }), highEvent, eventsMs: S.analyst ? S.analyst.runMs || null : null }; }
+    catch (e) { bands = { error: 'could not compute trade bands: ' + (e && e.message || e) }; }
     const panel = {
       key, underlying: u.name, label: u.label, kind, expiry: exp, futExpiry: futExp, dataMs: Date.now(), spotTs: spotTs ? String(spotTs) : null,
       spot, future: fut, vix, bucket, signals: { forward: sig.forward, maxPain: sig.maxPain, supports: sig.supports, resistances: sig.resistances, wallCentre: sig.wallCentre,
@@ -671,6 +722,7 @@ async function refreshUnderlying(u, now) {
       // keep the last close's OI so tomorrow can show the change since the previous close
       oiPrevClose: oiPrev, oiClose: now.hm >= '15:30' ? oiNow : (prevPanel && prevPanel.expiry === exp ? prevPanel.oiClose || null : null),
       oiCloseDate: now.hm >= '15:30' ? now.date : (prevPanel && prevPanel.expiry === exp ? prevPanel.oiCloseDate || null : null),
+      bands,
     };
     S.panels[key] = panel;
     dbSet('latest/' + key, panel);
@@ -698,8 +750,9 @@ function tlabel(ms) { return new Date(ms).toLocaleTimeString('en-IN', { hour: '2
 function dtlabel(ms) { return new Date(ms).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }); }
 function setStatus(text, cls) { const s = $('#status'); s.textContent = text; s.className = 'chip ' + (cls || ''); }
 function tabs() {
-  const list = [];
+  const list = [['today', 'Today']];
   for (const u of UNDERLYINGS) list.push([u.name, u.label, S.panels[`${u.name}-${u.kinds[0]}`]]);
+  list.push(['condor', 'Iron condor'], ['strangle', 'Short strangle'], ['range', 'Range view']);
   const pend = (S.proposals || []).filter(p => p.status === 'pending').length;
   list.push(['analyst', 'Analyst'], ['track', 'Track record'], ['pm', 'Post-mortems'], ['props', 'Proposals' + (pend ? ' (' + pend + ')' : '')], ['method', 'How it works']);
   $('#tabs').innerHTML = list.map(([id, l, p]) => `<button class="tab" role="tab" aria-selected="${S.tab === id}" data-t="${id}">${esc(l)}${p ? `<span class="n">${dlabel(p.expiry)}</span>` : ''}</button>`).join('');
@@ -717,7 +770,11 @@ function render() {
   $('#banner').innerHTML = S.err ? `<div class="banner bad">${esc(errText(S.err))}${Object.keys(S.panels).length ? ' Showing the last saved data below.' : ''}</div>` : '';
   Object.values(S.charts).forEach(c => c.destroy()); S.charts = {};
   const v = $('#view');
-  if (S.tab === 'track') { v.innerHTML = trackView(); drawTrack(); return; }
+  const hook = () => { v.querySelectorAll('[data-tbsel] button').forEach(b => b.onclick = () => { S.tbSel = b.dataset.k; render(); }); v.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => { S.tab = b.dataset.goto; render(); }); };
+  if (S.tab === 'today') { v.innerHTML = todayView(); return; }
+  if (S.tab === 'condor' || S.tab === 'strangle') { v.innerHTML = structView(S.tab); hook(); drawPayoff(S.tab); return; }
+  if (S.tab === 'range') { v.innerHTML = rangeTabView(); hook(); return; }
+  if (S.tab === 'track') { v.innerHTML = trackView() + paperView(); drawTrack(); return; }
   if (S.tab === 'analyst') { v.innerHTML = analystView(); return; }
   if (S.tab === 'pm') { v.innerHTML = pmView(); return; }
   if (S.tab === 'props') { v.innerHTML = propView(); v.querySelectorAll('[data-dec]').forEach(b => b.onclick = () => decide(b.dataset.id, b.dataset.dec)); return; }
@@ -726,8 +783,9 @@ function render() {
   const key = S.sel[u.name] && S.panels[S.sel[u.name]] ? S.sel[u.name] : u.kinds.map(k => `${u.name}-${k}`).find(k => S.panels[k]);
   const p = key && S.panels[key];
   if (!p) { v.innerHTML = `<div class="card empty">${S.busy || !S.err ? 'Fetching the live option chain from Kite…' : 'No data yet for this contract. Press Refresh once Kite is connected.'}</div>`; return; }
-  v.innerHTML = ladderView(u, now, p.key) + panelView(p, now);
+  v.innerHTML = ladderView(u, now, p.key) + tradeLine(p) + panelView(p, now);
   v.querySelectorAll('[data-key]').forEach(b => b.onclick = () => { S.sel[u.name] = b.dataset.key; render(); });
+  v.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => { S.tab = b.dataset.goto; render(); });
   drawCharts(p);
   const sg = v.querySelector('[data-oi]'); if (sg) sg.querySelectorAll('button').forEach(b => b.onclick = () => { S.oiMode[p.key] = b.dataset.m; render(); });
 }
@@ -867,6 +925,138 @@ function drawCharts(p) {
       { label: 'Spot', data: L.map(l => l.spot), borderColor: css('--fwd'), borderDash: [5, 4], borderWidth: 2, pointRadius: 0 }] }, options: o });
   }
 }
+// ---------- trade bands: today, iron condor, short strangle, range view
+const VCLS = { TRADE: 'p-good', 'PAPER-TRADE ONLY': 'p-warn', 'NO TRADE': 'p-neutral' };
+const vpill = v => `<span class="pill ${VCLS[v] || 'p-neutral'}">${esc(v || '—')}</span>`;
+const rup = x => x == null || !isFinite(x) ? '—' : (x < 0 ? '−' : '') + '₹' + Math.abs(Math.round(x)).toLocaleString('en-IN');
+const pts = x => x == null || !isFinite(x) ? '—' : (x < 0 ? '−' : '') + Math.abs(x).toFixed(1);
+function bandPanels() {
+  const out = [], seen = new Map();
+  for (const u of UNDERLYINGS) for (const k of u.kinds) {
+    const p = S.panels[`${u.name}-${k}`]; if (!p) continue;
+    const id = u.name + '|' + p.expiry;
+    if (seen.has(id)) { seen.get(id).also.push(KIND[k]); continue; }
+    const row = { p, u, kind: k, also: [] }; seen.set(id, row); out.push(row);
+  }
+  return out;
+}
+const bandLabel = r => `${r.u.label} ${KIND[r.kind]}${r.also.length ? ' (= ' + r.also.join(', ') + ')' : ''}`;
+function legPay(legs, Sx, costPts) { return legs.reduce((a, l) => a + l.side * ((l.type === 'CE' ? Math.max(0, Sx - l.strike) : Math.max(0, l.strike - Sx)) - l.price), 0) - costPts * legs.length; }
+function legsText(legs) { return legs.map(l => `${l.side > 0 ? 'Buy' : 'Sell'} ${fmt(l.strike)} ${l.type}`).join(' · '); }
+function edgeText(b) {
+  if (!b || !b.fair) return '—';
+  const iv = b.smile.atm, fv = b.fair.vol, r = (iv - fv) / iv * 100;
+  if (Math.abs(r) < 0.5) return `IV ${(iv * 100).toFixed(1)}% = fair <span class="mut">no edge assumed</span>`;
+  return `IV ${(iv * 100).toFixed(1)}% vs fair ${(fv * 100).toFixed(1)}% <span class="${r > 0 ? 'up' : 'dn'}">${r > 0 ? 'rich' : 'cheap'} ${Math.abs(r).toFixed(0)}%</span>`;
+}
+function tbSelector() {
+  const rows = bandPanels();
+  if (!S.tbSel || !rows.some(r => r.p.key === S.tbSel)) S.tbSel = rows.length ? rows[0].p.key : null;
+  return rows.length ? `<div class="seg tbsel" data-tbsel>${rows.map(r => `<button data-k="${esc(r.p.key)}" aria-pressed="${r.p.key === S.tbSel}">${esc(r.u.label)} ${esc(KIND[r.kind].replace(' weekly', ' wk'))} · ${dlabel(r.p.expiry)}</button>`).join('')}</div>` : '';
+}
+const CAVEAT = 'Priced at last traded prices from the chain; check the live bid/ask before acting, and size so the 3σ loss is money you can lose. A statistical edge, not a guarantee: one bad week can take several good weeks of profit.';
+function todayView() {
+  const rows = bandPanels();
+  if (!rows.length) return `<div class="card empty">${S.busy || !S.err ? 'Fetching the live option chains from Kite…' : 'No data yet. Press Refresh once Kite is connected.'}</div>`;
+  const now = ist(), vs = rows.map(r => r.p.bands && r.p.bands.today ? r.p.bands.today.verdict : null);
+  const nT = vs.filter(v => v === 'TRADE').length, nP = vs.filter(v => v === 'PAPER-TRADE ONLY').length;
+  const head = nT ? `${nT} contract${nT > 1 ? 's' : ''} pass every test` : nP ? `No live trade. ${nP} contract${nP > 1 ? 's show' : ' shows'} an edge worth paper-trading` : 'No trade today on any contract';
+  const pc = Object.fromEntries(UNDERLYINGS.map(u => [u.name, paperCounts(S.tradescores, u.name)]));
+  return `<section class="card today"><h3>Trade or no trade: ${esc(head)}</h3>
+    <div class="sub">Selling a range (iron condor or short strangle) pays only when options are priced above the movement we expect. Live from the chain at ${S.dataMs ? tlabel(S.dataMs) : '—'} IST; the analyst records a paper trade for each contract at 09:40.</div>
+    <div class="tdl">
+    ${rows.map(r => { const b = r.p.bands, t = b && b.today, ok = b && !b.error; const tdl = tradingDaysLeft(now.date, r.p.expiry);
+      const meta = ok ? [edgeText(b), esc({ up: 'strong up-trend', down: 'strong down-trend', range: 'no strong trend', unknown: 'trend unknown (no history)' }[b.regime.regime] || b.regime.regime),
+        b.highEvent ? '<span class="pill p-bad">High-impact event before expiry</span>' : 'no high-impact event found'].join(' · ') : '';
+      return `<div class="tdrow"><div><b>${esc(bandLabel(r))}</b><small class="mut">${dlabel(r.p.expiry)} · ${tdl === 0 ? 'expires today' : tdl + ' trading day' + (tdl === 1 ? '' : 's') + ' left'}</small></div>
+        <div>${t ? vpill(t.verdict) + `<small class="mut">best: ${t.structure === 'condor' ? 'iron condor' : 'short strangle'}</small>` : '<span class="mut">—</span>'}</div>
+        <div class="tdw">${t ? esc(t.reason.charAt(0).toUpperCase() + t.reason.slice(1)) : esc((b && b.error) || 'Bands appear after the next refresh.')}${meta ? `<small class="mut">${meta}</small>` : ''}</div></div>`; }).join('')}
+    </div>
+    <p class="note" style="margin:10px 0 0">Paper record so far: ${UNDERLYINGS.map(u => `${u.label} ${pc[u.name].condor} condor, ${pc[u.name].strangle} strangle`).join(' · ')} settled (8 of each needed before any verdict can say TRADE). ${CAVEAT}</p></section>
+    <div class="grid" style="margin-top:14px">
+      <div class="card s4"><h3>Iron condor</h3><div class="sub">Defined risk: sell a put and a call, buy wings further out.</div><p class="note" style="margin:0">Loss is capped at the wing width less the credit. The tab shows the best strikes, the payoff and every candidate.</p></div>
+      <div class="card s4"><h3>Short strangle</h3><div class="sub">More credit, loss not capped.</div><p class="note" style="margin:0">Judged on the loss of a 3σ move, not on win rate. Only for capital that can take a gap.</p></div>
+      <div class="card s4"><h3>Range view</h3><div class="sub">No trade: where it is likely to settle.</div><p class="note" style="margin:0">The 30–70, 20–80 and 10–90 settlement bands from the market's own distribution, adjusted for how much the index really moves.</p></div></div>`;
+}
+function structView(kind) {
+  const sel = tbSelector(), p = S.panels[S.tbSel];
+  if (!p) return `<div class="card empty">No data yet. Press Refresh once Kite is connected.</div>`;
+  const b = p.bands, u = UNDERLYINGS.find(x => x.name === p.underlying), name = kind === 'condor' ? 'Iron condor' : 'Short strangle';
+  if (!b || b.error) return sel + `<div class="card empty">${esc((b && b.error) || 'Trade bands appear after the next refresh.')}</div>`;
+  const best = b[kind].best, v = b.verdicts[kind], lot = b.lot, cfg = mergeConfig(S.config).trade;
+  const risk = kind === 'condor' ? (best && best.maxLoss) : (best && -best.loss3);
+  const kpis = best ? `<div class="kpis">${kpi('Credit', pts(best.credit) + ' pts', rup(best.credit * lot) + ' per lot')}${kpi('Expected profit', pts(best.ev) + ' pts', rup(best.ev * lot) + ' per lot, after costs')}
+    ${kpi('Chance of profit', pct(best.pop), 'Settles between ' + best.breakevens.map(fmt).join(' and '))}
+    ${kpi(kind === 'condor' ? 'Maximum loss' : 'Loss on a 3<span class="nc">σ</span> move', rup(-(kind === 'condor' ? best.maxLoss : -best.loss3) * lot), kind === 'condor' ? 'Capped by the wings' : '<span class="dn">Not capped beyond this</span>')}
+    ${kpi('Loss on a 2<span class="nc">σ</span> move', rup(best.loss2 * lot), '±' + fmt(2 * b.sd) + ' points')}
+    ${kpi('Edge score', best.score == null ? '—' : (best.score * 100).toFixed(1) + '%', `Needs ${Math.round((kind === 'condor' ? cfg.condorMin : cfg.strangleMin) * 100)}% of ${kind === 'condor' ? 'max loss' : '3σ loss'}`)}</div>` : '';
+  const legs = best ? `<div class="tw"><table><thead><tr><th>Leg</th><th class="r">Strike</th><th>Type</th><th class="r">Price</th></tr></thead><tbody>${[...best.legs].sort((a, c) => a.strike - c.strike).map(l => `<tr><td>${l.side > 0 ? '<span class="pill p-info">Buy</span>' : '<span class="pill p-warn">Sell</span>'}</td><td class="r">${fmt(l.strike)}</td><td>${l.type}</td><td class="r">${l.price.toFixed(2)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="note">No liquid strikes for this structure.</p>';
+  const all = b[kind].all || [];
+  return sel + `<section class="card" style="margin-top:12px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline"><h3>${name}: ${esc(u.label)} ${esc(KIND[p.kind])} · ${dlabel(p.expiry)}</h3>${vpill(v.verdict)}</div>
+    <div class="sub">${esc(v.reason.charAt(0).toUpperCase() + v.reason.slice(1))}.</div>
+    <p class="note" style="margin:0">Forward ${fmt(b.F)} · 1σ to expiry ±${fmt(b.sd)} (fair) · ${edgeText(b)} · costs ${b.costPts.toFixed(1)} pts a leg · lot ${lot}${b.fair.note ? ' · ' + esc(b.fair.note) : ''}</p></section>
+    ${kpis}
+    <div class="grid" style="margin-top:14px"><div class="card s4"><h3>Best strikes</h3><div class="sub">${best ? `Shorts near the ${Math.round(best.p * 100)}/${Math.round((1 - best.p) * 100)} settlement quantiles · ${pct(best.inside)} chance of settling between them` : ''}</div>${legs}</div>
+      <div class="card s8"><h3>Profit or loss at expiry, per lot</h3><div class="sub">After costs. Dashed line = spot.</div>${best ? '<div class="chart-box"><canvas id="payChart" role="img" aria-label="Payoff at expiry"></canvas></div>' : ''}</div></div>
+    <div class="card" style="margin-top:14px"><h3>Every candidate</h3><div class="sub">Shorts placed at the p and (1−p) quantiles of the settlement distribution; the best edge score wins</div>
+      <div class="tw"><table><thead><tr><th>p</th><th>Legs</th><th class="r">Credit</th><th class="r">Expected</th><th class="r">Chance of profit</th><th class="r">${kind === 'condor' ? 'Max loss' : '3<span class="nc">σ</span> loss'} /lot</th><th class="r">Score</th></tr></thead><tbody>
+      ${all.map(c => `<tr${best && c === best || (best && legsText(c.legs) === legsText(best.legs)) ? ' class="hl"' : ''}><td>${Math.round(c.p * 100)}/${Math.round((1 - c.p) * 100)}</td><td class="nw">${esc(legsText(c.legs))}</td><td class="r">${pts(c.credit)}</td><td class="r ${c.ev > 0 ? 'up' : 'dn'}">${pts(c.ev)}</td><td class="r">${pct(c.pop)}</td><td class="r">${rup((kind === 'condor' ? c.maxLoss : -c.loss3) * lot)}</td><td class="r">${c.score == null ? '—' : (c.score * 100).toFixed(1) + '%'}</td></tr>`).join('')}
+      </tbody></table></div><p class="note" style="margin:10px 0 0">${CAVEAT}</p></div>`;
+}
+function drawPayoff(kind) {
+  const p = S.panels[S.tbSel], cv = document.getElementById('payChart');
+  if (!cv || typeof Chart === 'undefined' || !p || !p.bands) return;
+  const b = p.bands, best = b[kind].best; if (!best) return;
+  const lo = b.F - 3.5 * b.sd, hi = b.F + 3.5 * b.sd, n = 70, xs = Array.from({ length: n + 1 }, (_, i) => lo + (hi - lo) * i / n);
+  const tick = css('--muted'), grid = css('--line'), ys = xs.map(x => legPay(best.legs, x, b.costPts) * b.lot);
+  const iSpot = xs.reduce((bi, x, i) => Math.abs(x - p.spot) < Math.abs(xs[bi] - p.spot) ? i : bi, 0);
+  const spotLine = { id: 'spotLine', afterDatasetsDraw(ch) { const x = ch.scales.x.getPixelForValue(iSpot), { top, bottom } = ch.chartArea, c = ch.ctx; c.save(); c.strokeStyle = tick; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(x, top); c.lineTo(x, bottom); c.stroke(); c.restore(); } };
+  S.charts.pay = new Chart(cv, { type: 'line', plugins: [spotLine], data: { labels: xs.map(fmt), datasets: [
+    { label: 'P&L per lot', data: ys, borderColor: css('--ce'), borderWidth: 2, pointRadius: 0, fill: { target: { value: 0 }, above: 'rgba(31,143,95,.15)', below: 'rgba(204,62,52,.15)' } }] },
+    options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { title: c => 'Settles at ' + c[0].label, label: c => 'P&L ' + rup(c.parsed.y) + ' per lot' } } },
+      scales: { x: { grid: { display: false }, ticks: { color: tick, maxRotation: 0, autoSkipPadding: 12 } }, y: { grid: { color: grid }, border: { display: false }, ticks: { color: tick, callback: v => rup(v) } } } } });
+}
+function rangeTabView() {
+  const sel = tbSelector(), rows = bandPanels(), p = S.panels[S.tbSel];
+  if (!p) return `<div class="card empty">No data yet. Press Refresh once Kite is connected.</div>`;
+  const b = p.bands;
+  if (!b || b.error) return sel + `<div class="card empty">${esc((b && b.error) || 'The range view appears after the next refresh.')}</div>`;
+  const q = b.range.q, lo = q[10] - (q[90] - q[10]) * 0.18, hi = q[90] + (q[90] - q[10]) * 0.18, pos = x => clamp((x - lo) / (hi - lo) * 100, 0, 100);
+  const band = (a, c, cls) => `<i class="${cls}" style="left:${pos(a)}%;width:${pos(c) - pos(a)}%"></i>`;
+  const lab = (x, cls) => `<span class="rq ${cls}" style="left:${pos(x)}%">${fmt(x)}</span>`;
+  return sel + `<section class="card" style="margin-top:12px"><h3>Where ${esc(UNDERLYINGS.find(u => u.name === p.underlying).label)} ${esc(KIND[p.kind])} is likely to settle · ${dlabel(p.expiry)}</h3>
+    <div class="sub">The market's own settlement distribution (from the option smile, so skew is kept), centred on the futures-implied forward ${fmt(b.F)} and narrowed to fair volatility. No position is implied.</div>
+    <div class="rbar">${band(q[10], q[90], 'r10')}${band(q[20], q[80], 'r20')}${band(q[30], q[70], 'r30')}<i class="rmid" style="left:${pos(q[50])}%"></i><i class="rspot" style="left:${pos(p.spot)}%"></i>
+      ${lab(q[10], 'top')}${lab(q[90], 'top')}${lab(q[20], 'bot')}${lab(q[80], 'bot')}${lab(q[30], 'top')}${lab(q[70], 'top')}</div>
+    <div class="range-key"><span><i class="r30"></i>30–70: 40% chance</span><span><i class="r20"></i>20–80: 60%</span><span><i class="r10"></i>10–90: 80%</span><span><i class="rmid"></i>median ${fmt(q[50])}</span><span><i class="rspot"></i>spot ${fmt(p.spot)}</span></div></section>
+    <div class="card" style="margin-top:14px"><h3>All contracts</h3><div class="sub">Settlement bands by expiry</div><div class="tw"><table><thead><tr><th>Contract</th><th class="r">30–70</th><th class="r">20–80</th><th class="r">10–90</th><th class="r">Median</th><th>Volatility used</th></tr></thead><tbody>
+    ${rows.map(r => { const x = r.p.bands; if (!x || x.error) return `<tr><td>${esc(bandLabel(r))}</td><td colspan="5" class="mut">not available</td></tr>`; const bb = x.range.bands;
+      return `<tr><td class="nw">${esc(bandLabel(r))}<small class="mut" style="display:block">${dlabel(r.p.expiry)}</small></td>${['30-70', '20-80', '10-90'].map(k => `<td class="r nw">${fmt(bb[k][0])} – ${fmt(bb[k][1])}</td>`).join('')}<td class="r">${fmt(x.range.q[50])}</td><td class="nw">${edgeText(x)}</td></tr>`; }).join('')}
+    </tbody></table></div><p class="note" style="margin:10px 0 0">These bands differ from the expected-settlement ranges on the Nifty and Bank Nifty tabs: those centre on the model's blended estimate and use implied volatility as priced; these centre on the forward and use fair volatility.</p></div>`;
+}
+function paperView() {
+  const all = (S.tradescores || []).slice().sort((a, b) => b.expiry.localeCompare(a.expiry) || (b.date || '').localeCompare(a.date || ''));
+  const out = [`<div class="sec-h"><h2>Paper trades</h2><p>The analyst records the best condor and strangle for each contract at 09:40 and scores them at settlement, after costs. "Taken" means the verdict did not say NO TRADE.</p></div>`];
+  if (!all.length) return out.join('') + '<div class="card note">The first paper trades settle after the next expiry. Eight settled trades per index and structure are needed before any verdict can say TRADE.</div>';
+  const st = (xs, s) => { const t = xs.filter(x => x[s] && x[s].taken), r = t.map(x => x[s].rupees), sh = xs.filter(x => x[s]).map(x => x[s].rupees);
+    return { n: t.length, win: t.length ? t.filter(x => x[s].win).length / t.length : null, tot: r.reduce((a, b) => a + b, 0), worst: r.length ? Math.min(...r) : null, shadow: sh.reduce((a, b) => a + b, 0), nAll: sh.length }; };
+  for (const u of UNDERLYINGS) {
+    const xs = all.filter(x => x.idx === u.name); if (!xs.length) continue;
+    const c = st(xs, 'condor'), s = st(xs, 'strangle');
+    out.push(`<div class="kpis">${kpi(u.label + ' condors taken', c.n, c.win == null ? '—' : pct(c.win) + ' won')}${kpi('Condor P&L / lot', rup(c.tot), 'Worst ' + rup(c.worst))}${kpi('Condor, every day', rup(c.shadow), c.nAll + ' trades incl. NO TRADE days')}
+      ${kpi(u.label + ' strangles taken', s.n, s.win == null ? '—' : pct(s.win) + ' won')}${kpi('Strangle P&L / lot', rup(s.tot), 'Worst ' + rup(s.worst))}${kpi('Strangle, every day', rup(s.shadow), s.nAll + ' trades incl. NO TRADE days')}</div>`);
+  }
+  out.push(`<div class="card" style="margin-top:14px"><div class="tw"><table><thead><tr><th>Locked</th><th>Contract</th><th>Verdict</th><th class="r">Settled</th><th class="r">Condor / lot</th><th class="r">Strangle / lot</th></tr></thead><tbody>
+    ${all.slice(0, 40).map(x => { const cell = o => o ? `<span class="${o.rupees >= 0 ? 'up' : 'dn'}">${rup(o.rupees)}</span>${o.taken ? '' : ' <small class="mut">(not taken)</small>'}` : '—';
+      return `<tr><td class="nw">${dlabel(x.date)}</td><td class="nw">${esc((UNDERLYINGS.find(u => u.name === x.idx) || {}).label || x.idx)} ${esc(KIND[x.kind] || x.kind)} · ${dlabel(x.expiry)}</td><td>${vpill(x.verdict)}</td><td class="r">${fmt(x.settlement)}</td><td class="r">${cell(x.condor)}</td><td class="r">${cell(x.strangle)}</td></tr>`; }).join('')}
+    </tbody></table></div></div>`);
+  return out.join('');
+}
+function tradeLine(p) {
+  const t = p.bands && p.bands.today; if (!t) return '';
+  return `<div class="card tradeline">${vpill(t.verdict)} <span>Trade view for this expiry: ${esc(t.reason)}.</span> <button class="linkbtn" data-goto="today">Today tab →</button></div>`;
+}
 // ---------- analyst overlay, track record, post-mortems, proposals
 function analystOverlay(p) { const o = S.analyst && S.analyst.overlays && S.analyst.overlays[p.key]; return o && o.expiry === p.expiry && S.analyst.runMs && Date.now() - S.analyst.runMs < 30 * 3600e3 ? o : null; }
 function withOverlay(p) {
@@ -982,6 +1172,9 @@ function methodView() {
   <p>A scheduled Claude run at 09:40 and 14:45 on trading days pulls the option chains from Kite, checks the NSE market feed and searches the news for events (RBI and Fed meetings, US inflation data, FII flows, overnight markets, big bank results). It runs this same model, then may widen the range (up to ×1.3) and move the centre (up to 0.25σ), always with written reasons, and locks the prediction.</p>
   <h3>Self-correction</h3>
   <p>After each expiry the 09:40 run scores every locked call three ways: the model alone, the model with the analyst's overlay, and the plain futures price. It names the type of miss (event shock, trend breakout through an open-interest wall, a bigger or smaller move than implied volatility priced) and writes a post-mortem. Signal weights then move toward what worked, at most 1/11th per expiry. When a mistake repeats over the last 8 expiries, it proposes a structural change, which waits for your approval on the Proposals tab.</p>
+  <h3>Trade bands (Today, Iron condor, Short strangle, Range view)</h3>
+  <p>Selling a range only pays if options are priced above the movement the index really delivers. Fair volatility blends realised volatility over 10, 20 and 60 days (half, 30% and 20%), is never taken below 80% of implied volatility, is raised 15% in a strong trend, and is set equal to implied volatility when a high-impact event falls before expiry (so no edge is assumed). The settlement distribution is the market's own, read from the option smile so put skew and fat tails are kept, centred on the futures-implied forward and narrowed by the gap between implied and fair volatility.</p>
+  <p>Short strikes are tried at the 10/90 to 30/70 quantiles (never nearer the money, where an expiry-only view understates day-to-day risk); condor wings sit about half a standard deviation further out. Each candidate's expected profit is computed after costs (slippage of 1 point a leg on Nifty and 3 on Bank Nifty, plus ₹60 a leg per lot). The verdict is NO TRADE in a strong trend, before a high-impact event, when expected profit is negative or when it is below 4% of the condor's maximum loss or 3% of the strangle's 3σ loss. Otherwise it is PAPER-TRADE ONLY until 8 paper trades per index and structure have settled, and only then TRADE.</p>
   <h3>Data</h3>
   <p>Live numbers on this page come from your Kite connector in claude.ai, read-only. The Kite connection lasts about a week; when it lapses the page and the analyst say so. Reconnect Kite in claude.ai Settings → Connectors and press Refresh.</p></div>`;
 }

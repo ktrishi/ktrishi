@@ -153,9 +153,7 @@ function settleTrade(t, settle) {
   return { id: t.id, idx: t.idx, kind: t.kind, key: t.key, expiry: t.expiry, date: t.date, settlement: settle, verdict: t.today && t.today.verdict,
     condor: one('condor'), strangle: one('strangle') };
 }
-function paperCounts(tradeScores, idx) {
-  const mine = (tradeScores || []).filter(s => s.idx === idx);
-  return { condor: mine.filter(s => s.condor && s.condor.taken).length, strangle: mine.filter(s => s.strangle && s.strangle.taken).length };
-}
+// Same count the page uses: shared from the engine block.
+const paperCounts = (scores, idx) => ENG().paperCounts(scores, idx);
 
 module.exports = { classifyMiss, scoreLock, postmortem, settleDue, proposals, applyApproved, settleTrade, paperCounts, LESSON };

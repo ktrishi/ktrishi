@@ -59,3 +59,11 @@ test('validate requires a strike step', () => {
   const { step, ...noStep } = sampleChain(eng);
   assert.throws(() => validateChain(noStep), /step/);
 });
+
+test('page script has no duplicate top-level names (a view must never shadow an engine function)', () => {
+  const html = require('node:fs').readFileSync(HTML, 'utf8'), js = html.slice(html.indexOf('<script>'), html.lastIndexOf('</script>'));
+  const names = [...js.matchAll(/^(?:async\s+)?(?:function\s+([A-Za-z0-9_$]+)|const\s+([A-Za-z0-9_$]+)\s*=|let\s+([A-Za-z0-9_$]+)\s*=)/gm)].map(m => m[1] || m[2] || m[3]);
+  const dup = names.filter((n, i) => names.indexOf(n) !== i);
+  assert.deepEqual(dup, []);
+  assert.ok(names.includes('rangeView') && names.includes('tradeBands'));
+});

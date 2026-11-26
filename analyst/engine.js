@@ -4,7 +4,7 @@ const fs = require('node:fs');
 
 const EXPORTS = ['UNDERLYINGS', 'PRIOR', 'PRIOR_K', 'SIGNALS', 'ist', 'closeMs', 'yearFrac', 'isLive', 'dteBucket', 'ncdf', 'b76',
   'impliedVol', 'computeSignals', 'predict', 'fmt', 'compare', 'scoreLocks', 'refit', 'trackRecord', 'percentile', 'clamp', 'applyConfig', 'mergeConfig', 'DEFAULT_CONFIG',
-  'realizedVol', 'trendRegime', 'fairVol', 'fitSmile', 'impliedDist', 'gridCdf', 'gridQuantile', 'evalLegs', 'bandFinder', 'tradeVerdict', 'rangeView', 'tradeBands'];
+  'realizedVol', 'trendRegime', 'fairVol', 'fitSmile', 'impliedDist', 'gridCdf', 'gridQuantile', 'evalLegs', 'bandFinder', 'tradeVerdict', 'rangeView', 'tradeBands', 'eventBefore', 'closesFor', 'paperCounts'];
 
 const DEFAULT_HTML = require('node:path').join(__dirname, '..', 'artifact', 'fo_expiry_desk.html');
 
@@ -79,19 +79,11 @@ function buildLock({ chain, nowMs, weights, cfg, overlay, events, prevLock, slot
   };
 }
 
-// An event counts for a contract only if it falls on or before that expiry; an undated event counts (the cautious reading).
-function eventBefore(e, expiry) { const d = String((e && e.when) || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d <= expiry : true; }
-// Daily closes the page saved in latest/hist-<IDX>; older than 4 calendar days counts as missing (fair volatility = implied).
-function closesFor(history, idx, today) {
-  const h = history && history[idx];
-  if (!h || !Array.isArray(h.closes) || !h.asOf) return null;
-  return (Date.parse(today) - Date.parse(String(h.asOf).slice(0, 10))) / 864e5 <= 4 ? h.closes : null;
-}
 // One paper trade per contract per morning: the trade-band verdict and the best condor and strangle, priced at the lock's quotes.
 function buildTrade({ chain, lock, history, events, cfg, paperN, htmlPath }) {
   const eng = loadEngine(htmlPath || DEFAULT_HTML), now = eng.ist(chain.takenMs);
-  const highEvent = (events || []).some(e => e.impact === 'high' && eventBefore(e, chain.expiry));
-  const closes = closesFor(history, chain.idx, now.date);
+  const highEvent = (events || []).some(e => e.impact === 'high' && eng.eventBefore(e, chain.expiry));
+  const closes = eng.closesFor(history, chain.idx, now.date);
   const tb = eng.tradeBands({ rows: chain.rows, F: lock.forward, T: eng.yearFrac(chain.takenMs, chain.expiry), closes, highEvent, idx: chain.idx, cfg, paperN });
   const base = { id: `${lock.key}-${chain.expiry}-${now.date}`, key: lock.key, idx: chain.idx, kind: chain.kind, expiry: chain.expiry, date: now.date,
     madeAt: chain.takenMs, lockId: lock.id, spot: chain.spot, forward: lock.forward };
@@ -101,4 +93,4 @@ function buildTrade({ chain, lock, history, events, cfg, paperN, htmlPath }) {
     lot: tb.lot, costPts: tb.costPts, condor: slim(tb.condor.best), strangle: slim(tb.strangle.best), verdicts: tb.verdicts, today: tb.today, range: tb.range };
 }
 
-module.exports = { loadEngine, validateChain, applyConfig, buildLock, buildTrade, eventBefore, closesFor, signalRows, toSnap, get DEFAULT_CONFIG() { return JSON.parse(JSON.stringify(loadEngine(DEFAULT_HTML).DEFAULT_CONFIG)); } };
+module.exports = { loadEngine, validateChain, applyConfig, buildLock, buildTrade, signalRows, toSnap, get DEFAULT_CONFIG() { return JSON.parse(JSON.stringify(loadEngine(DEFAULT_HTML).DEFAULT_CONFIG)); } };
