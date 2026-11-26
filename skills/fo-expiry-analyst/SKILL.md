@@ -9,6 +9,8 @@ Rishi is a senior private banker. He wants blunt, risk-first analysis: start eve
 
 ## What exists
 - **Dashboard:** https://claude.ai/artifact/GbTkBwUEMhr34yuFMFs26V. It reads Kite live through the Kite connector and keeps its data in the artifact database, which you read and write with the `ArtifactData` tool.
+  - While it is open in market hours, it refreshes the option chains every 5 minutes. Nifty, Bank Nifty and India VIX spot prices are refreshed separately every 5 minutes, and "Spot at HH:MM" on the ticker shows the last update. Nothing refreshes while the page is closed.
+  - If Rishi says the spot prices aren't updating, the usual cause is that Kite has logged out.
 - **Code:** GitHub `ktrishi/ktrishi`, branch `claude/optimistic-darwin-d1hw4k`, folder `analyst/`:
   - `run.js` has three commands: `state`, `lock` and `settle`.
   - `engine.js` loads the model straight out of the dashboard page, so the page and the analyst cannot disagree.
