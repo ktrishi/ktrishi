@@ -43,6 +43,7 @@ Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked
 5. Search events with Firecrawl and cm-market.
 6. Run `node analyst/run.js lock`.
 7. Write the batch files back with `ArtifactData`.
+8. Start the final reply with the one-line **phone line** from the runbook. Both scheduled tasks send Rishi a push notification, and it shows that line. Problems come first, then verdicts; keep it under 200 characters.
 
 Why the run is built this way:
 - Kite quotes are the expensive part. Fetch each one once.
