@@ -712,7 +712,7 @@ async function refreshUnderlying(u, now) {
   const spot = parseQuote(head[u.spot]).ltp, fut = parseQuote(head[futId]).ltp, vix = head[VIX] ? parseQuote(head[VIX]).ltp : null;
   const spotTs = head[u.spot] && head[u.spot].timestamp;
   const prevClose = head[u.spot] && head[u.spot].ohlc ? +head[u.spot].ohlc.close || null : null;
-  S.indices[u.name] = { label: u.label, spot, prevClose, vix, ms: Date.now() };
+  S.indices[u.name] = { label: u.label, spot, prevClose, vix, ms: Date.now() }; S.spotMs = Date.now();
   dbSet('latest/index-' + u.name, S.indices[u.name]);
   let H = null; try { H = await dailyHistory(u, now); } catch (e) { H = S.hist[u.name] || null; }
   const prevHLC = H && H.prevHLC || null, close3 = H && H.close3 || null;
@@ -796,9 +796,7 @@ function render() {
   const now = ist(), market = now.dow > 0 && now.dow < 6 && now.hm >= '09:15' && now.hm <= '15:30';
   if (S.err) setStatus(S.err.code === 'server_not_connected' || S.err.code === 'needs_reauth' ? 'Kite login needed' : S.err.code && ERR_COPY[S.err.code] ? 'Kite permission needed' : 'Problem loading ' + (S.err.where || 'data'), 'alert');
   else if (S.dataMs) setStatus((market ? 'Kite ✔ live · ' : 'Market closed · ') + 'data ' + tlabel(S.dataMs) + ' IST', market ? 'live' : '');
-  $('#ticker').innerHTML = UNDERLYINGS.map(u => { const t = S.indices[u.name] || (S.panels[u.name + '-monthly'] ? { spot: S.panels[u.name + '-monthly'].spot } : null); if (!t) return ''; const ch = t.prevClose ? (t.spot / t.prevClose - 1) * 100 : null;
-    return `<span class="tk"><span>${u.label}</span><b>${fmt(t.spot)}</b>${ch == null ? '' : `<em class="${ch >= 0 ? 'up' : 'dn'}" style="font-style:normal">${ch >= 0 ? '▲' : '▼'} ${Math.abs(ch).toFixed(2)}%</em>`}</span>`; }).join('')
-    + (() => { const v = (S.indices.NIFTY || {}).vix; return v ? `<span class="tk"><span>India VIX</span><b>${v.toFixed(2)}</b></span>` : ''; })();
+  renderTicker();
   $('#asof').textContent = S.dataMs ? 'Updated ' + dtlabel(S.dataMs) + ' IST · refreshes every 5 min while open in market hours' : 'Nifty: 3 weeklies + monthly · Bank Nifty: monthly';
   $('#banner').innerHTML = S.err ? `<div class="banner bad">${esc(errText(S.err))}${Object.keys(S.panels).length ? ' Showing the last saved data below.' : ''}</div>` : '';
   Object.values(S.charts).forEach(c => c.destroy()); S.charts = {};
@@ -821,6 +819,27 @@ function render() {
   v.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => { S.tab = b.dataset.goto; render(); });
   drawCharts(p);
   const sg = v.querySelector('[data-oi]'); if (sg) sg.querySelectorAll('button').forEach(b => b.onclick = () => { S.oiMode[p.key] = b.dataset.m; render(); });
+}
+function renderTicker() {
+  $('#ticker').innerHTML = UNDERLYINGS.map(u => { const t = S.indices[u.name] || (S.panels[u.name + '-monthly'] ? { spot: S.panels[u.name + '-monthly'].spot } : null); if (!t) return ''; const ch = t.prevClose ? (t.spot / t.prevClose - 1) * 100 : null;
+    return `<span class="tk"><span>${u.label}</span><b>${fmt(t.spot)}</b>${ch == null ? '' : `<em class="${ch >= 0 ? 'up' : 'dn'}" style="font-style:normal">${ch >= 0 ? '▲' : '▼'} ${Math.abs(ch).toFixed(2)}%</em>`}</span>`; }).join('')
+    + (() => { const v = (S.indices.NIFTY || {}).vix; return v ? `<span class="tk"><span>India VIX</span><b>${v.toFixed(2)}</b></span>` : ''; })()
+    + (S.spotMs ? `<span class="tk"><span>Spot at</span><b style="font-size:13px">${tlabel(S.spotMs)}</b></span>` : '');
+}
+// Spot prices only (Nifty, Bank Nifty, India VIX): one small quote call every 5 minutes in market hours, separate from
+// the option-chain refresh, so the ticker keeps moving even if a chain fetch fails.
+async function refreshSpots() {
+  if (!S.mcp) return;
+  try {
+    const q = await kite({ mode: 'quote', instruments: [...UNDERLYINGS.map(u => u.spot), VIX] });
+    for (const u of UNDERLYINGS) {
+      const r = q && q[u.spot]; if (!r || !(+r.last_price > 0)) continue;
+      const t = S.indices[u.name] || { label: u.label };
+      S.indices[u.name] = { ...t, label: u.label, spot: +r.last_price, prevClose: r.ohlc && +r.ohlc.close || t.prevClose || null, ms: Date.now() };
+    }
+    const v = q && q[VIX]; if (v && +v.last_price > 0 && S.indices.NIFTY) S.indices.NIFTY.vix = +v.last_price;
+    S.spotMs = Date.now(); renderTicker();
+  } catch (e) { /* the full refresh reports Kite problems; the ticker just keeps its last value */ }
 }
 function tradingDaysLeft(today, expiry) { let n = 0; const d = new Date(today + 'T00:00:00Z'), e = new Date(expiry + 'T00:00:00Z'); while (d < e) { d.setUTCDate(d.getUTCDate() + 1); const w = d.getUTCDay(); if (w > 0 && w < 6) n++; } return n; }
 // Every expiry of one index on a common level scale, so the term structure of the forecast is visible at a glance.
@@ -1239,6 +1258,9 @@ render();
   if (db) { await loadStore(); render(); }
   if (!mcp) { setStatus('Kite unavailable', 'alert'); $('#banner').innerHTML = '<div class="banner bad">Live Kite data is not available in this view. Open the artifact in claude.ai while signed in as its owner.</div>'; return; }
   await refresh();
-  setInterval(() => { const n = ist(); if (n.dow > 0 && n.dow < 6 && n.hm >= '09:15' && n.hm <= '15:35' && !document.hidden) refresh(); }, 5 * 60e3);
+  const open = () => { const n = ist(); return n.dow > 0 && n.dow < 6 && n.hm >= '09:15' && n.hm <= '15:35' && !document.hidden; };
+  setInterval(() => { if (open()) refresh(); }, 5 * 60e3);
+  // spots on their own 5-minute clock, offset by 2.5 minutes, so the ticker moves about every 2–3 minutes in all
+  setTimeout(() => { if (open()) refreshSpots(); setInterval(() => { if (open()) refreshSpots(); }, 5 * 60e3); }, 150e3);
 })();
 </script>
