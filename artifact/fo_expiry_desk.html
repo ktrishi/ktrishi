@@ -187,8 +187,8 @@ footer { color: var(--muted); font-size: 12px; padding-block: 18px; }
 <script>
 /*ENGINE-START*/
 const UNDERLYINGS = [
-  { name: 'NIFTY', label: 'Nifty', spot: 'NSE:NIFTY 50', token: 256265, step: 50, kinds: ['weekly', 'weekly2', 'weekly3', 'monthly'], thr: 0.003 },
-  { name: 'BANKNIFTY', label: 'Bank Nifty', spot: 'NSE:NIFTY BANK', token: 260105, step: 100, kinds: ['monthly'], thr: 0.004 },
+  { name: 'NIFTY', label: 'Nifty', spot: 'NSE:NIFTY 50', token: 256265, step: 50, kinds: ['weekly', 'weekly2', 'weekly3', 'monthly'], thr: 0.003, lot: 65 },
+  { name: 'BANKNIFTY', label: 'Bank Nifty', spot: 'NSE:NIFTY BANK', token: 260105, step: 100, kinds: ['monthly'], thr: 0.004, lot: 30 },
 ];
 const VIX = 'NSE:INDIA VIX';
 const SLOTS = ['09:45', '12:30', '15:05'];
@@ -364,12 +364,14 @@ function trackRecord(rows) {
     w1: rows.filter(r => Math.abs(r.errPct) <= 1).length / n, cov68: b68.length ? b68.filter(r => r.in68).length / b68.length : null,
     cov90: b90.length ? b90.filter(r => r.in90).length / b90.length : null, beats: mae < fmae };
 }
-const DEFAULT_CONFIG = { kScale: { NIFTY: 1, BANKNIFTY: 1 }, eventBandMax: 1.3, nudgeCapSigma: 0.25, dropped: { NIFTY: [], BANKNIFTY: [] }, forwardFloor: { NIFTY: 0, BANKNIFTY: 0 } };
+const DEFAULT_CONFIG = { kScale: { NIFTY: 1, BANKNIFTY: 1 }, eventBandMax: 1.3, nudgeCapSigma: 0.25, dropped: { NIFTY: [], BANKNIFTY: [] }, forwardFloor: { NIFTY: 0, BANKNIFTY: 0 },
+  trade: { feePerLegLot: 60, slip: { NIFTY: 1, BANKNIFTY: 3 }, volFloor: 0.8, trendMult: 1.15, condorMin: 0.04, strangleMin: 0.03, minPaper: 8, pMin: 0.10, pMax: 0.30 } };
 function mergeConfig(cfg) {
   const d = DEFAULT_CONFIG, c = cfg || {};
   return { kScale: { ...d.kScale, ...(c.kScale || {}) }, eventBandMax: +c.eventBandMax || d.eventBandMax,
     nudgeCapSigma: c.nudgeCapSigma == null || isNaN(+c.nudgeCapSigma) ? d.nudgeCapSigma : +c.nudgeCapSigma,
-    dropped: { ...d.dropped, ...(c.dropped || {}) }, forwardFloor: { ...d.forwardFloor, ...(c.forwardFloor || {}) }, changedMs: { ...(c.changedMs || {}) } };
+    dropped: { ...d.dropped, ...(c.dropped || {}) }, forwardFloor: { ...d.forwardFloor, ...(c.forwardFloor || {}) }, changedMs: { ...(c.changedMs || {}) },
+    trade: { ...d.trade, ...(c.trade || {}), slip: { ...d.trade.slip, ...((c.trade && c.trade.slip) || {}) } } };
 }
 function applyConfig(ws, cfg, idx) {
   cfg = mergeConfig(cfg);
@@ -385,6 +387,161 @@ function applyConfig(ws, cfg, idx) {
   }
   const sc = (cfg.kScale && cfg.kScale[idx]) || 1;
   return { ...ws, weights: w, k68: ws.k68 * sc, k90: ws.k90 * sc };
+}
+// ---- Trade bands: is selling a range (iron condor / short strangle) worth it? ----
+// Edge exists only if options are rich: implied volatility above a conservative estimate of fair volatility.
+// The distribution is the market's own (from the smile), deflated by that gap, so skew and fat tails are kept.
+function realizedVol(closes, n) {
+  if (!closes || closes.length < n + 1) return null;
+  const c = closes.slice(-(n + 1)), r = [];
+  for (let i = 1; i < c.length; i++) r.push(Math.log(c[i] / c[i - 1]));
+  const m = r.reduce((a, b) => a + b, 0) / r.length;
+  return Math.sqrt(r.reduce((a, x) => a + (x - m) * (x - m), 0) / (r.length - 1) * 252);
+}
+function sma(xs, n, end = xs.length) { return end < n ? null : xs.slice(end - n, end).reduce((a, b) => a + b, 0) / n; }
+function trendRegime(closes) {
+  if (!closes || closes.length < 205) return { regime: 'unknown', note: 'fewer than 205 daily closes' };
+  const c = closes[closes.length - 1], d20 = sma(closes, 20), d50 = sma(closes, 50), d200 = sma(closes, 200), d20p = sma(closes, 20, closes.length - 5);
+  const r = c > d20 && d20 > d50 && d50 > d200 && d20 > d20p ? 'up' : c < d20 && d20 < d50 && d50 < d200 && d20 < d20p ? 'down' : 'range';
+  return { regime: r, close: c, d20, d50, d200 };
+}
+function fairVol({ iv, closes, regime, highEvent, cfg }) {
+  if (!(iv > 0)) return null;
+  const t = mergeConfig(cfg).trade, rv10 = realizedVol(closes, 10), rv20 = realizedVol(closes, 20), rv60 = realizedVol(closes, 60);
+  if (rv10 == null || rv20 == null || rv60 == null) return { vol: iv, source: 'iv', rv10, rv20, rv60, blend: null, note: 'no price history, so fair volatility = implied (no edge assumed)' };
+  const blend = 0.5 * rv10 + 0.3 * rv20 + 0.2 * rv60, notes = [];
+  let vol = blend;
+  if (vol < t.volFloor * iv) { vol = t.volFloor * iv; notes.push(`realised ${(blend * 100).toFixed(1)}% is below the floor of ${Math.round(t.volFloor * 100)}% of implied`); }
+  if (regime === 'up' || regime === 'down') { vol *= t.trendMult; notes.push(`strong ${regime}-trend: fair volatility raised ${Math.round((t.trendMult - 1) * 100)}%`); }
+  if (highEvent && vol < iv) { vol = iv; notes.push('high-impact event before expiry: no edge assumed'); }
+  return { vol, source: 'rv', rv10, rv20, rv60, blend, note: notes.join('; ') };
+}
+// Smile from out-of-the-money last prices: quadratic in log-moneyness, flat beyond the quoted strikes.
+function fitSmile(rows, F, T) {
+  const pts = [];
+  for (const r of rows) {
+    const K = r.strike, typ = K < F ? 'PE' : 'CE', px = typ === 'PE' ? r.pe_ltp : r.ce_ltp;
+    if (!(px > 0.1)) continue;
+    const iv = impliedVol(px, F, K, T, typ);
+    if (iv != null) pts.push({ m: Math.log(K / F), iv });
+  }
+  const atmPt = pts.length ? pts.reduce((a, p) => Math.abs(p.m) < Math.abs(a.m) ? p : a) : null;
+  const flat = v => ({ flat: true, atm: v, at: () => v, n: pts.length });
+  if (!atmPt) return null;
+  if (pts.length < 5) return flat(atmPt.iv);
+  let S = Array.from({ length: 3 }, () => [0, 0, 0]), b = [0, 0, 0];
+  for (const p of pts) { const v = [1, p.m, p.m * p.m]; for (let i = 0; i < 3; i++) { b[i] += v[i] * p.iv; for (let j = 0; j < 3; j++) S[i][j] += v[i] * v[j]; } }
+  const det = M => M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+  const D = det(S);
+  if (Math.abs(D) < 1e-18) return flat(atmPt.iv);
+  const co = [0, 1, 2].map(k => det(S.map((row, i) => row.map((x, j) => j === k ? b[i] : x))) / D);
+  const mLo = Math.min(...pts.map(p => p.m)), mHi = Math.max(...pts.map(p => p.m)), atm = co[0];
+  if (!(atm > 0)) return flat(atmPt.iv);
+  const at = K => { const m = clamp(Math.log(K / F), mLo, mHi); return clamp(co[0] + co[1] * m + co[2] * m * m, 0.5 * atm, 3 * atm); };
+  return { flat: false, atm, at, n: pts.length, coef: co };
+}
+// Distribution of the settlement implied by a smile: CDF(K) = dPut/dK = N(-d2) + vega * dvol/dK.
+function impliedDist({ F, T, volAt, span = 8, n = 1601 }) {
+  const s0 = F * volAt(F) * Math.sqrt(T), lo = Math.max(F - span * s0, F * 0.05), hi = F + span * s0, h = (hi - lo) / (n - 1);
+  const cdf = K => {
+    const v = volAt(K), sT = v * Math.sqrt(T), d1 = (Math.log(F / K) + 0.5 * sT * sT) / sT, d2 = d1 - sT, e = K * 1e-4;
+    return ncdf(-d2) + F * npdf(d1) * Math.sqrt(T) * (volAt(K + e) - volAt(K - e)) / (2 * e);
+  };
+  const x = [], c = [];
+  let run = 0;
+  for (let i = 0; i <= n; i++) { run = Math.max(run, clamp(cdf(lo + (i - 0.5) * h), 0, 1)); c.push(run); }
+  const w = [];
+  for (let i = 0; i < n; i++) { x.push(lo + i * h); w.push(c[i + 1] - c[i]); }
+  const tot = w.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < n; i++) w[i] /= tot;
+  const mean = x.reduce((a, xi, i) => a + xi * w[i], 0), sd = Math.sqrt(x.reduce((a, xi, i) => a + (xi - mean) * (xi - mean) * w[i], 0));
+  return { x, w, F, T, mean, sd, h };
+}
+function gridCdf(g, K) { let a = 0; for (let i = 0; i < g.x.length; i++) { if (g.x[i] > K) break; a += g.w[i]; } return a; }
+function gridQuantile(g, p) {
+  let a = 0;
+  for (let i = 0; i < g.x.length; i++) {
+    const nx = a + g.w[i];
+    if (nx >= p) { const f = g.w[i] > 0 ? (p - a) / g.w[i] : 0, h = g.h || (i ? g.x[i] - g.x[i - 1] : 0); return g.x[i] - h / 2 + f * h; }
+    a = nx;
+  }
+  return g.x[g.x.length - 1];
+}
+// legs: [{type:'CE'|'PE', strike, side:+1 long|-1 short, price}]; payoff per unit at expiry, net of costPts per leg.
+function evalLegs(legs, g, { costPts = 0, F, sd }) {
+  const intr = (l, S) => l.type === 'CE' ? Math.max(0, S - l.strike) : Math.max(0, l.strike - S);
+  const pay = S => legs.reduce((a, l) => a + l.side * (intr(l, S) - l.price), 0) - costPts * legs.length;
+  const credit = -legs.reduce((a, l) => a + l.side * l.price, 0);
+  let ev = 0, pop = 0;
+  for (let i = 0; i < g.x.length; i++) { const v = pay(g.x[i]); ev += g.w[i] * v; if (v > 0) pop += g.w[i]; }
+  const ks = [...new Set(legs.map(l => l.strike))].sort((a, b) => a - b), top = 3 * Math.max(F, ks[ks.length - 1]);
+  const bp = [0, ...ks, top], breakevens = [];
+  for (let i = 1; i < bp.length; i++) {
+    const a = pay(bp[i - 1]), b = pay(bp[i]);
+    if (a === 0 && i === 1) breakevens.push(bp[0]);
+    if ((a < 0 && b > 0) || (a > 0 && b < 0)) breakevens.push(bp[i - 1] + (bp[i] - bp[i - 1]) * a / (a - b));
+    else if (b === 0) breakevens.push(bp[i]);
+  }
+  const unlimited = legs.filter(l => l.type === 'CE').reduce((a, l) => a + l.side, 0) < 0;
+  const worst = Math.min(...bp.map(pay));
+  return { credit, ev, pop, breakevens: breakevens.map(x => Math.round(x * 100) / 100), maxLoss: unlimited ? null : Math.max(0, -worst),
+    loss2: Math.min(pay(F - 2 * sd), pay(F + 2 * sd)), loss3: Math.min(pay(F - 3 * sd), pay(F + 3 * sd)), unlimited };
+}
+function bandFinder({ rows, F, T, fairAtm, idx, cfg, smile }) {
+  cfg = mergeConfig(cfg); const t = cfg.trade, u = UNDERLYINGS.find(x => x.name === idx) || {};
+  smile = smile || fitSmile(rows, F, T);
+  if (!smile || !(fairAtm > 0)) return null;
+  const shift = smile.atm - fairAtm, volAt = K => Math.max(smile.at(K) - shift, 0.5 * smile.at(K));
+  const g = impliedDist({ F, T, volAt }), sd = g.sd;
+  const lot = u.lot || 1, costPts = (t.slip[idx] || 1) + t.feePerLegLot / lot;
+  const puts = rows.filter(r => r.strike < F && r.pe_ltp >= 0.5), calls = rows.filter(r => r.strike > F && r.ce_ltp >= 0.5);
+  const nearest = (xs, target) => xs.reduce((a, r) => !a || Math.abs(r.strike - target) < Math.abs(a.strike - target) ? r : a, null);
+  const condors = [], strangles = [], seen = new Set();
+  // Shorts no closer than the 30/70 quantiles: nearer the money the expiry-only payoff understates day-to-day (gamma) risk.
+  for (let p = t.pMin; p <= t.pMax + 1e-9; p += 0.05) {
+    const sp = nearest(puts, gridQuantile(g, p)), sc = nearest(calls, gridQuantile(g, 1 - p));
+    if (!sp || !sc || seen.has(sp.strike + '|' + sc.strike)) continue;
+    seen.add(sp.strike + '|' + sc.strike);
+    const legsS = [{ type: 'PE', strike: sp.strike, side: -1, price: sp.pe_ltp }, { type: 'CE', strike: sc.strike, side: -1, price: sc.ce_ltp }];
+    const inside = gridCdf(g, sc.strike) - gridCdf(g, sp.strike), base = { p: Math.round(p * 100) / 100, inside };
+    const ms = evalLegs(legsS, g, { costPts, F, sd });
+    strangles.push({ ...base, legs: legsS, ...ms, score: ms.loss3 < 0 ? ms.ev / -ms.loss3 : null });
+    const lp = nearest(rows.filter(r => r.strike < sp.strike && r.pe_ltp > 0), sp.strike - 0.5 * sd), lc = nearest(rows.filter(r => r.strike > sc.strike && r.ce_ltp > 0), sc.strike + 0.5 * sd);
+    if (!lp || !lc) continue;
+    const legsC = [{ type: 'PE', strike: lp.strike, side: 1, price: lp.pe_ltp }, ...legsS, { type: 'CE', strike: lc.strike, side: 1, price: lc.ce_ltp }];
+    const mc = evalLegs(legsC, g, { costPts, F, sd });
+    condors.push({ ...base, legs: legsC, ...mc, score: mc.maxLoss > 0 ? mc.ev / mc.maxLoss : null });
+  }
+  const best = xs => xs.filter(x => x.score != null).reduce((a, x) => !a || x.score > a.score || (x.score === a.score && x.pop > a.pop) ? x : a, null);
+  return { grid: g, sd, shift, costPts, lot, condor: { best: best(condors), all: condors }, strangle: { best: best(strangles), all: strangles } };
+}
+function tradeVerdict({ structure, best, regime, highEvent, paperN, cfg }) {
+  const t = mergeConfig(cfg).trade, min = structure === 'condor' ? t.condorMin : t.strangleMin, per = structure === 'condor' ? 'maximum loss' : 'the loss on a 3σ move';
+  const no = reason => ({ verdict: 'NO TRADE', reason });
+  if (!best) return no('no liquid strikes to build it from');
+  if (regime === 'up' || regime === 'down') return no(`strong ${regime}-trend (price beyond rising 20/50/200-day averages): ranges break in trends`);
+  if (highEvent && !(best.ev > 0)) return no('high-impact event before expiry: options are priced for it, so there is no edge');
+  if (!(best.ev > 0)) return no('expected value after costs is negative: options are not rich enough versus realised movement');
+  if (!(best.score >= min)) return no(`edge too thin: expected profit is ${(best.score * 100).toFixed(1)}% of ${per} (needs ${Math.round(min * 100)}%)`);
+  if ((paperN || 0) < t.minPaper) return { verdict: 'PAPER-TRADE ONLY', reason: `edge found, but only ${paperN || 0} of ${t.minPaper} paper trades have settled for this index` };
+  return { verdict: 'TRADE', reason: `expected profit ${(best.score * 100).toFixed(1)}% of ${per}, ${Math.round(best.pop * 100)}% chance of profit` };
+}
+function rangeView(g) {
+  const q = Object.fromEntries([10, 20, 30, 50, 70, 80, 90].map(p => [p, gridQuantile(g, p / 100)]));
+  return { q, bands: { '30-70': [q[30], q[70]], '20-80': [q[20], q[80]], '10-90': [q[10], q[90]] } };
+}
+// rows: [{strike, ce_ltp, pe_ltp}] (the wide window); F forward; T years; closes oldest→newest daily index closes.
+function tradeBands({ rows, F, T, closes, highEvent, idx, cfg, paperN }) {
+  cfg = mergeConfig(cfg);
+  const smile = fitSmile(rows, F, T);
+  if (!smile) return { error: 'no usable option prices' };
+  const regime = trendRegime(closes), fair = fairVol({ iv: smile.atm, closes, regime: regime.regime, highEvent, cfg });
+  const bf = bandFinder({ rows, F, T, fairAtm: fair.vol, idx, cfg, smile });
+  const v = s => tradeVerdict({ structure: s, best: bf[s].best, regime: regime.regime, highEvent, paperN, cfg });
+  const verdicts = { condor: v('condor'), strangle: v('strangle') }, rank = { TRADE: 2, 'PAPER-TRADE ONLY': 1, 'NO TRADE': 0 };
+  const pick = rank[verdicts.strangle.verdict] > rank[verdicts.condor.verdict] ? 'strangle' : 'condor';
+  return { F, T, smile: { atm: smile.atm, flat: smile.flat, n: smile.n }, regime, fair, sd: bf.sd, costPts: bf.costPts, lot: bf.lot,
+    condor: bf.condor, strangle: bf.strangle, range: rangeView(bf.grid), verdicts, today: { structure: pick, ...verdicts[pick] } };
 }
 /*ENGINE-END*/
 

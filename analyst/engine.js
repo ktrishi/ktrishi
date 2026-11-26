@@ -3,7 +3,8 @@
 const fs = require('node:fs');
 
 const EXPORTS = ['UNDERLYINGS', 'PRIOR', 'PRIOR_K', 'SIGNALS', 'ist', 'closeMs', 'yearFrac', 'isLive', 'dteBucket', 'ncdf', 'b76',
-  'impliedVol', 'computeSignals', 'predict', 'fmt', 'compare', 'scoreLocks', 'refit', 'trackRecord', 'percentile', 'clamp', 'applyConfig', 'mergeConfig', 'DEFAULT_CONFIG'];
+  'impliedVol', 'computeSignals', 'predict', 'fmt', 'compare', 'scoreLocks', 'refit', 'trackRecord', 'percentile', 'clamp', 'applyConfig', 'mergeConfig', 'DEFAULT_CONFIG',
+  'realizedVol', 'trendRegime', 'fairVol', 'fitSmile', 'impliedDist', 'gridCdf', 'gridQuantile', 'evalLegs', 'bandFinder', 'tradeVerdict', 'rangeView', 'tradeBands'];
 
 const DEFAULT_HTML = require('node:path').join(__dirname, '..', 'artifact', 'fo_expiry_desk.html');
 
