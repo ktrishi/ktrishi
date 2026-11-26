@@ -67,6 +67,7 @@ function lockCmd() {
       if (done.has(k)) return; done.add(k);
       const t = buildTrade({ chain, lock: made[i], history, events: input.events, cfg, paperN: paperCounts(state.tradescores, chain.idx), htmlPath: HTML });
       if (!EXISTING.has('trades/' + t.id)) { trades.push(t); writes.push(w('trades', t.id, t, versions)); }
+      console.log(`TRADE ${t.id}: ${t.today.verdict} (${t.today.structure || '-'}) - ${t.today.reason}${t.historyUsed === false ? ' [no fresh price history]' : ''}`);
     });
   }
   writes.push(w('analyst', 'latest', {

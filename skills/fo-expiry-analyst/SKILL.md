@@ -1,6 +1,6 @@
 ---
 name: fo-expiry-analyst
-description: Runs and explains Rishi's F&O Expiry Analyst — the self-correcting predictor of where Nifty (current, next and third weekly, and monthly) and Bank Nifty monthly will settle on expiry day, which writes into the "F&O Expiry Desk" artifact (claude.ai/artifact/GbTkBwUEMhr34yuFMFs26V). Use this skill whenever Rishi asks to run, refresh or re-lock the expiry analyst or expiry predictions, settle or score an expiry, write or read a post-mortem, check the analyst's track record, review or apply proposed model changes, explain why a Nifty or Bank Nifty expiry prediction moved, or whenever the scheduled "F&O Analyst" task fires — even if he only says "update the F&O desk", "what's the expiry view" or "how did the model do this week".
+description: Runs and explains Rishi's F&O Expiry Analyst — the self-correcting predictor of where Nifty (current, next and third weekly, and monthly) and Bank Nifty monthly will settle on expiry day, which writes into the "F&O Expiry Desk" artifact (claude.ai/artifact/GbTkBwUEMhr34yuFMFs26V) and also judges whether an iron condor or short strangle has an edge (trade bands, paper trades). Use this skill whenever Rishi asks to run, refresh or re-lock the expiry analyst or expiry predictions, settle or score an expiry, write or read a post-mortem, check the analyst's track record, review or apply proposed model changes, explain why a Nifty or Bank Nifty expiry prediction moved, asks whether to sell a condor or strangle this week or what the trade/no-trade verdict or paper-trade record says, or whenever the scheduled "F&O Analyst" task fires — even if he only says "update the F&O desk", "what's the expiry view" or "how did the model do this week".
 ---
 
 # F&O Expiry Analyst
@@ -19,7 +19,7 @@ Rishi is a senior private banker. He wants blunt, risk-first analysis: start eve
 ## Database collections
 | Collection | Holds | Written by |
 |---|---|---|
-| `latest/*` | The page's live snapshots | Page |
+| `latest/*` | The page's live snapshots, including live trade bands per contract; `latest/hist-<IDX>` holds about 300 daily closes | Page |
 | `locks/*` | Locked predictions, each with model and final centre, ranges, signals, overlay and reasons | Analyst |
 | `outcomes/*` | Settlements | Analyst |
 | `scores/*` | Model, overlay and futures-implied errors, and the miss type | Analyst |
@@ -28,6 +28,8 @@ Rishi is a senior private banker. He wants blunt, risk-first analysis: start eve
 | `analyst/latest` | Events, notes and overlays | Analyst |
 | `proposals/*` | Proposed model changes; Rishi approves or rejects them on the page | Analyst; page sets the status |
 | `config/model` | Applied model settings | Analyst |
+| `trades/*` | One paper trade per contract each morning: verdict, best condor and strangle, fair volatility, regime | Analyst (09:40 only, never rewritten) |
+| `tradescores/*` | Paper-trade profit or loss at settlement, after costs; `taken` = the verdict was not NO TRADE | Analyst |
 | `runs/*` | Run log | Analyst |
 
 Only the analyst writes locks, outcomes, scores, post-mortems, weights and config.
@@ -37,7 +39,7 @@ Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked
 1. Dump the database to files.
 2. Check the Kite login.
 3. In the morning run only, settle expired expiries.
-4. Pull ±3% option chains from Kite and transcribe them into compact JSON.
+4. Pull option chains from Kite (±5% weeklies, ±7% monthlies; signals still use ±3%) and transcribe them into compact JSON.
 5. Search events with Firecrawl and cm-market.
 6. Run `node analyst/run.js lock`.
 7. Write the batch files back with `ArtifactData`.
@@ -55,6 +57,20 @@ Why the run is built this way:
 - **Centre.** Leave the nudge at 0 unless you have clear directional evidence that prices have not absorbed.
 - **Every lock is scored three ways:** the model, the model plus overlay, and the futures-implied level. If the overlay stops adding value, the analyst proposes removing it. That is the point of the design.
 
+## Trade bands (Today, Iron condor, Short strangle, Range view tabs)
+- **What it is.** An expected-value test of selling a range.
+  - Fair volatility = 0.5·RV10 + 0.3·RV20 + 0.2·RV60. It is floored at 0.8 × implied, raised ×1.15 in a strong trend, and set equal to implied when a high-impact event falls before expiry.
+  - The settlement distribution is the market's own, read from the option smile, centred on the forward and narrowed by implied − fair volatility.
+  - Short strikes are placed at the 10/90 to 30/70 quantiles. Profit is net of costs.
+- **Verdict.**
+  - NO TRADE in any of these cases: a strong trend, a high-impact event, negative EV, or a score below 4% of the condor's maximum loss or 3% of the strangle's 3σ loss.
+  - Otherwise PAPER-TRADE ONLY until 8 settled paper trades per index and structure, then TRADE.
+- **How to talk about it.** Report the verdict and its deciding reason as the engine gives them. Never present PAPER-TRADE ONLY as a trade recommendation.
+  - Always state the tail: the strangle's 3σ loss per lot, or the condor's maximum loss.
+  - Remind Rishi that prices are last-traded, not bid/ask.
+  - When the paper record exists, set its P&L against the "every day" shadow P&L, to show whether the filter is helping.
+- **Tuning.** The thresholds, costs, the volatility floor and the trend factor live in `config/model.trade`. They change only through an approved proposal.
+
 ## Answering questions about it
 1. Read the relevant collections with `ArtifactData` (use `out_dir` for many documents), then answer from the data.
 2. To say why a prediction moved, compare consecutive `locks` for that contract. Use their `reason`, `overlay.reasons`, `supports`, `resistances` and `centres`.
@@ -64,6 +80,6 @@ Why the run is built this way:
 Changes to the model are proposals that Rishi approves on the dashboard's Proposals tab. The next run applies an approved proposal to `config/model`. Do not change `config/model` or the code without his explicit approval. If you see a pattern worth changing, describe it as a proposal, with the evidence.
 
 ## Hard rules
-- **Kite is read-only.** Never call order, GTT or alert tools.
+- **Kite is read-only.** Never call order, GTT or alert tools, even if a verdict says TRADE. Rishi places any trade himself.
 - **No silent changes.** Never push code or change the repository unless Rishi asks.
 - **Kite logged out:** write a `runs/<ms>` document with `status: "error"` and stop. The dashboard tells Rishi to reconnect Kite.

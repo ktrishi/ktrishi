@@ -59,6 +59,16 @@ A **Today** tab gives one trade / paper-trade / no-trade verdict per contract an
   - Settlement scores their P&L at expiry, net of costs.
   - The Track record tab shows paper P&L, win rate and worst loss.
 
+## Changes made during the build (reported to Rishi)
+1. **Distribution: market smile instead of a symmetric Student-t.**
+   - A symmetric distribution against a skewed market makes selling puts look falsely attractive. That is the side where crashes hurt.
+   - The build therefore reads the distribution from the out-of-the-money smile (a quadratic in log-moneyness, flat beyond the quoted strikes) and lowers every strike's volatility by implied − fair.
+   - With fair = implied, every structure's EV is exactly minus its costs. This is tested.
+2. **Shorts no nearer than the 30/70 quantiles.**
+   - Left free, the optimiser drifts to p = 0.40, which is close to a short straddle.
+   - An expiry-only payoff understates the day-to-day gamma and mark-to-market risk of near-the-money shorts.
+3. **Analyst weekly window ±5%, not ±4%.** The third weekly's wings fall outside ±4%. The analyst still uses 2 quote calls.
+
 ## Non-goals
 Live Kite margin (not exposed by the connector), order placement, and any automatic trading.
 

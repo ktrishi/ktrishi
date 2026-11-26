@@ -14,9 +14,11 @@ You are the scheduled analyst for Rishi's F&O Expiry Desk. Follow these steps ex
    - Call the run **morning** if it is before 12:00 IST, otherwise **afternoon**. Use the slot label `09:40` or `14:45` accordingly.
 
 ## 1. Read the database (to files, not into the conversation)
-1. For each collection `locks`, `outcomes`, `scores`, `proposals`, `weights`, `config`, `postmortems`, call `ArtifactData` with `action: "list"`, `query: {"limit": 1000}` and `out_dir: "$W/dump"`.
+1. For each collection `locks`, `outcomes`, `scores`, `proposals`, `weights`, `config`, `postmortems`, `trades`, `tradescores`, call `ArtifactData` with `action: "list"`, `query: {"limit": 1000}` and `out_dir: "$W/dump"`.
    - If a result gives a `next_cursor`, call again with `query.cursor` set to it, until there is none.
-2. Also `get` `analyst/latest` with `out_dir: "$W/dump"`. It may not exist yet; that is fine.
+2. Also `get` `analyst/latest`, `latest/hist-NIFTY` and `latest/hist-BANKNIFTY`, each with `out_dir: "$W/dump"`. Any of them may not exist yet; that is fine.
+   - The `hist-*` documents hold about 300 daily closes, which the dashboard saves once a day. They drive realised volatility and the trend filter for the trade bands.
+   - If one is missing or more than 4 days old, the run still works, but fair volatility falls back to implied volatility, so that index's verdicts become NO TRADE. Say so in the reply: "open the dashboard once today so it refreshes the price history".
 3. Write `$W/versions.json` as `{}`, plus the `version N` the tool printed for `analyst/latest` and `config/model`, if they exist (keys `"analyst/latest"` and `"config/model"`).
 4. Run `node $R/analyst/run.js state --dir $W/dump --versions $W/versions.json --out $W/state.json`.
 
@@ -36,13 +38,14 @@ You are the scheduled analyst for Rishi's F&O Expiry Desk. Follow these steps ex
    1. `get` each named document (no `out_dir`) and read its printed `version`.
    2. Add each one to `versions.json`.
    3. Rebuild state (step 1.4) and run settle again.
-5. For each `$W/settle/batch-*.json` in order, read it and call `ArtifactData` `action: "batch"` with `writes` = that file's array, unchanged. The entries point at per-document files.
-6. If a batch is refused:
+5. Settle also scores the paper trades of each settled expiry (`tradescores/*`).
+6. For each `$W/settle/batch-*.json` in order, read it and call `ArtifactData` `action: "batch"` with `writes` = that file's array, unchanged. The entries point at per-document files.
+7. If a batch is refused:
    1. Re-dump the database (step 1).
    2. Run settle again.
 
    This is safe: outcomes are written last, so an unfinished expiry is retried, and scores or post-mortems already saved are skipped.
-7. Rebuild state, as in step 1, so the lock step sees new weights and config.
+8. Rebuild state, as in step 1, so the lock step sees new weights, config and paper-trade counts.
 
 ## 4. Pull the option chains (Kite `market` tool)
 Contracts:
@@ -64,19 +67,23 @@ Keep tokens low: large tool results are saved to a file instead of entering the 
 3. **Head quote.** Make one `mode: "ltp"` call with both spots (`NSE:NIFTY 50`, `NSE:NIFTY BANK`), `NSE:INDIA VIX` and both futures.
    - Record `spot`, `future` and `vix`, and `takenMs` = now in epoch ms.
    - If a future symbol is missing, the prefix rule failed. Then call `option_chain` with that `expiry`, `limit: 1`, and use `future.id`.
-4. **Strike window.** Every multiple of the step within ±3% of spot.
-5. **Option quotes: one call for everything.**
-   - Make one `mode: "quote"` call with `<prefix><strike>CE` and `...PE` for every distinct expiry's window, under 500 instruments in total.
-   - It is too large to show, so it is saved to a file; do not read that file into the conversation.
+4. **Strike window.** Every multiple of the step within **±5% of spot for the weeklies** and **±7% for the monthlies**.
+   - The trade bands need the wider window, because condor wings sit well outside the money.
+   - The CLI computes the signals (max pain, walls, PCR) from the ±3% strikes only, exactly as the dashboard does.
+5. **Option quotes: two calls.**
+   - Call one: `mode: "quote"` with `<prefix><strike>CE` and `...PE` for the three Nifty weeklies.
+   - Call two: the same for the Nifty monthly and the Bank Nifty monthly.
+   - Keep each call under 500 instruments.
+   - Each result is too large to show, so it is saved to a file; do not read those files into the conversation.
    - If `missing_instruments` lists a whole expiry, its prefix is wrong. Check it with one `option_chain` call (`limit: 1`, read `strikes[0].call.tradingsymbol`), then re-quote only that expiry.
 6. **Chain file.** Build each contract's `rows` from the saved file:
-   `node $R/analyst/chain_from_quotes.js --prefix <prefix> --out $W/<key>.json <saved file>`
+   `node $R/analyst/chain_from_quotes.js --prefix <prefix> --out $W/<key>.json <saved file that holds that prefix>`
    Then write one object per contract to `$W/input.json` → `chains`:
    ```json
    {"idx":"NIFTY","kind":"weekly2","expiry":"YYYY-MM-DD","futExpiry":"YYYY-MM-DD","takenMs":<ms>,"spot":n,"future":n,"vix":n,"step":50,
     "prevHLC":[high,low,close],"close3":n,"rows":<contents of $W/<key>.json>}
    ```
-   - If two kinds share an expiry (for example `weekly3` = `monthly`), both reuse the same rows.
+   - If two kinds share an expiry (for example `weekly3` = `monthly`), both reuse the monthly's wider rows.
    - `prevHLC` and `close3` come from the step 3 candles, using only candles dated before today: `prevHLC` is the last of them, and `close3` is the close of the third-last.
    - The afternoon run reuses `cache.candles` from the morning instead of fetching them again.
 
@@ -127,3 +134,6 @@ Keep tokens low: large tool results are saved to a file instead of entering the 
    - If it fails again, write a `runs/<ms>` doc with `status: "error"` and the message, then stop.
 4. For each `$W/lock/batch-*.json`, call `ArtifactData` `batch` with `writes` = that file's array.
 5. Reply with a 3-line summary for each contract: centre, 68% range, the overlay and why.
+   - On the morning run, `lock` also writes one paper trade per contract (`trades/*`) and prints a `TRADE …` line for each.
+   - Add each contract's verdict and its reason to the reply: TRADE, PAPER-TRADE ONLY or NO TRADE.
+   - Quote the verdicts as printed. Never upgrade a verdict, and never suggest sizing beyond what the dashboard shows.
