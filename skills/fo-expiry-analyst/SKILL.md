@@ -39,21 +39,20 @@ Rishi is a senior private banker. He wants blunt, risk-first analysis: start eve
 Only the analyst writes locks, outcomes, scores, post-mortems, weights and config.
 
 ## To run the analyst (scheduled or on request)
-Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked out. In short:
-1. Dump the database to files.
-2. Check the Kite login.
-3. In the morning run only, settle expired expiries.
-4. Pull option chains from Kite (±5% weeklies, ±7% monthlies; signals still use ±3%) and transcribe them into compact JSON.
-5. Search events with Firecrawl and cm-market.
-6. Run `node analyst/run.js lock`.
-7. Write the batch files back with `ArtifactData`.
-8. Start the final reply with the one-line **phone line** from the runbook. Both scheduled tasks send Rishi a push notification, and it shows that line. Problems come first, then verdicts; keep it under 200 characters.
+Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked out. The run is built to use few tokens, because every model turn re-reads the whole conversation:
+1. **Read everything in one message:** Kite session and spot quote, the ArtifactData dumps (`out_dir`), and the `hist-*` documents.
+2. **Plan in one Bash call:** `run.js state` plus `prep.js plan`. These print the candle start date, the cached events and the exact two quote calls.
+3. **Fetch in one message:** the two quote calls, plus daily candles in the morning.
+4. **Settle and build in one Bash call:** `run.js settle --state-out` (morning) and `prep.js build`, which writes `input.json` from the saved quote files with no hand transcription. Then write the settle batches.
+5. **Events in one message:** one news search with `limit: 3`. Official date checks only for new events; a full calendar refresh on Monday or once a week.
+6. **Lock:** `run.js lock --research research.json`, then write the batches.
+7. **Reply:** the phone line, then a compact table. Nothing else. Both scheduled tasks push the reply's first line to Rishi's phone, so problems come first and it stays under 200 characters.
 
-Why the run is built this way:
-- Kite quotes are the expensive part. Fetch each one once.
-- Copy numbers exactly. The CLI rejects malformed chains rather than locking a wrong prediction.
+**Why the run is built this way:**
+- Never read the dump, quote or batch files into the conversation; the scripts read them.
 - The CLI refuses to overwrite a document without its version and prints `NEEDS_VERSION`. Fetch that version; never guess it.
 - Outcomes are written last, so a failed run leaves the expiry to be retried rather than half-settled.
+- Each run lasts about 10–15 turns. If one goes far beyond that, something went wrong; say so.
 
 ## Overlay rules (the analyst's judgement layer)
 - **Ranges.** You may widen the model's range up to `config.eventBandMax`, and move the centre by up to `config.nudgeCapSigma` × σ (0.25σ by default). Always give written reasons.

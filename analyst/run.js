@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 // Analyst CLI. Produces ArtifactData batch files (<=50 writes each) for the F&O Expiry Desk database.
-//   node analyst/run.js lock   --input input.json --state state.json --out DIR
-//   node analyst/run.js settle --state state.json --candles candles.json [--now MS] --out DIR
+//   node analyst/run.js lock   --input input.json [--research research.json] --state state.json --out DIR
+//   node analyst/run.js settle --state state.json --candles candles.json [--now MS] [--state-out state2.json] --out DIR
 //   node analyst/run.js state  --dir DUMPDIR [--versions versions.json] --out state.json
 const fs = require('node:fs');
 const path = require('node:path');
@@ -46,6 +46,12 @@ function finish(out, writes) {
 
 function lockCmd() {
   const input = readJson(arg('input')), state = readJson(arg('state'));
+  // research.json (written by the run): {events, overlays, notes, sources, eventsVerifiedMs}
+  if (arg('research')) {
+    const r = readJson(arg('research'));
+    for (const k of ['events', 'overlays', 'notes', 'sources']) if (r[k] !== undefined) input[k] = r[k];
+    if (r.eventsVerifiedMs) input.cache = { ...(input.cache || {}), eventsVerifiedMs: r.eventsVerifiedMs };
+  }
   const eng = loadEngine(HTML), cfg = eng.mergeConfig(state.config), versions = state.versions || {};
   EXISTING = new Set(state.existing || []);
   const prevLocks = state.locks || [], writes = [], made = [];
@@ -124,6 +130,17 @@ function settleCmd() {
     for (const p of proposals(idx, mine, cfg, props, nowMs)) { props.push(p); writes.push(w('proposals', p.id, p, versions)); }
   }
   writes.push(...outcomeWrites);
+  // The state the lock step needs after this settle, without dumping the database again.
+  if (arg('state-out')) {
+    const after = { ...state, config: cfg, scores, proposals: props, outcomes: { ...outcomes }, weights: { ...(state.weights || {}) },
+      tradescores: [...(state.tradescores || [])], existing: [...new Set([...(state.existing || []), ...writes.map(x => `${x.collection}/${x.doc_id}`)])] };
+    for (const x of writes) {
+      if (x.collection === 'weights') after.weights[x.doc_id] = { id: x.doc_id, ...x.data };
+      if (x.collection === 'outcomes') after.outcomes[x.doc_id] = { id: x.doc_id, ...x.data };
+      if (x.collection === 'tradescores' && !after.tradescores.some(t => t.id === x.doc_id)) after.tradescores.push({ id: x.doc_id, ...x.data });
+    }
+    fs.writeFileSync(arg('state-out'), JSON.stringify(after));
+  }
   writes.push(w('runs', String(nowMs), { runMs: nowMs, kind: 'settle', status: 'ok', settled: due.map(d => `${d.idx}-${d.expiry}`), applied: appliedIds }, versions));
   finish(arg('out'), writes);
 }
@@ -143,6 +160,14 @@ function stateCmd() {
     existing: ['locks', 'outcomes', 'scores', 'proposals', 'weights', 'config', 'postmortems', 'analyst', 'trades', 'tradescores'].flatMap(col => read(col).map(x => `${col}/${x.id}`)),
   };
   fs.writeFileSync(arg('out'), JSON.stringify(state));
+  // candles needed: the last week (prevHLC, close3) and every unsettled expiry that has locks
+  const eng = loadEngine(HTML), nowMs = Number(arg('now')) || Date.now(), today = eng.ist(nowMs).date, weekAgo = eng.ist(nowMs - 7 * 864e5).date;
+  const open = state.locks.filter(l => l.expiry < today && !state.outcomes[`${l.idx}-${l.expiry}`]).map(l => l.expiry).sort();
+  console.log(`CANDLES_FROM ${open.length && open[0] < weekAgo ? open[0] : weekAgo}`);
+  const lat = read('analyst').find(x => x.id === 'latest');
+  console.log(`CACHE ${lat && lat.cache && lat.cache.date === today ? 'today (reuse expiries' + (lat.cache.candles ? ', candles' : '') + ')' : 'stale or missing'}; EVENTS_VERIFIED ${lat && lat.cache && lat.cache.eventsVerifiedMs ? eng.ist(lat.cache.eventsVerifiedMs).date : 'never'}`);
+  for (const e of ((lat && lat.events) || []).slice(0, 10)) console.log(`EVENT ${e.when || '?'} | ${e.impact || '?'} | ${e.title} | ${e.source || ''}`);
+  if (lat && lat.notes) console.log(`LAST_NOTES ${String(lat.notes).slice(0, 300)}`);
   console.log(`state: ${state.trades.length} trades, history ${Object.keys(state.history).join('/') || 'none'}, ${state.locks.length} locks, ${Object.keys(state.outcomes).length} outcomes, ${state.scores.length} scores, ${state.proposals.length} proposals, config ${cfg ? 'found' : 'default'}`);
 }
 

@@ -162,3 +162,20 @@ test('settle scores paper trades before writing the outcome', () => {
 });
 
 
+
+test('settle --state-out carries new weights and outcomes to the lock step; state prints CANDLES_FROM', () => {
+  const d = tmp(), eng = loadEngine(HTML), ch = sampleChain(eng);
+  const { buildLock, DEFAULT_CONFIG } = require('../engine');
+  const lock = buildLock({ chain: ch, nowMs: ch.takenMs, cfg: DEFAULT_CONFIG, overlay: {}, events: [], prevLock: null, slot: '09:40' });
+  fs.writeFileSync(path.join(d, 'state.json'), JSON.stringify({ locks: [lock], outcomes: {}, scores: [], proposals: [], config: DEFAULT_CONFIG, versions: {} }));
+  fs.writeFileSync(path.join(d, 'candles.json'), JSON.stringify({ NIFTY: [{ date: '2026-11-23', close: 25366.4 }] }));
+  execFileSync('node', [RUN, 'settle', '--state', path.join(d, 'state.json'), '--candles', path.join(d, 'candles.json'), '--now', String(Date.UTC(2026, 10, 24, 4, 10)), '--state-out', path.join(d, 's2.json'), '--out', path.join(d, 'o')]);
+  const s2 = JSON.parse(fs.readFileSync(path.join(d, 's2.json'), 'utf8'));
+  assert.ok(Object.keys(s2.weights).some(k => k.startsWith('NIFTY-')));
+  assert.equal(s2.outcomes['NIFTY-2026-11-23'].settlement, 25366.4);
+  assert.ok(s2.existing.includes('outcomes/NIFTY-2026-11-23'));
+  const dump = path.join(d, 'dump'); fs.mkdirSync(path.join(dump, 'locks'), { recursive: true });
+  fs.writeFileSync(path.join(dump, 'locks', `${lock.id}.json`), JSON.stringify(lock));
+  const out = execFileSync('node', [RUN, 'state', '--dir', dump, '--now', String(Date.UTC(2026, 11, 5, 4, 10)), '--out', path.join(d, 's3.json')], { encoding: 'utf8' });
+  assert.match(out, /CANDLES_FROM 2026-11-23/, 'on 5-Dec the unsettled 23-Nov expiry is older than a week');
+});
