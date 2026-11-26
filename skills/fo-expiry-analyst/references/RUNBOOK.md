@@ -18,6 +18,8 @@ You are the scheduled analyst for Rishi's F&O Expiry Desk. Follow these steps ex
 
 The **morning** run is before 12:00 IST; it uses slot `09:40` and settles. The **afternoon** run uses slot `14:45` and skips the steps marked *(morning)*.
 
+The scheduled task's own prompt names older steps: its "step 3 (settle)" means steps 4–5 here. Its candle instruction for the afternoon is met by step 3: fetch candles only when CACHE says stale.
+
 ## 0. Start (one Bash call)
 1. Create `W`.
 2. Find or clone the repository:
