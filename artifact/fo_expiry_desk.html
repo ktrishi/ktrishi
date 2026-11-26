@@ -530,14 +530,16 @@ function rangeView(g) {
   const q = Object.fromEntries([10, 20, 30, 50, 70, 80, 90].map(p => [p, gridQuantile(g, p / 100)]));
   return { q, bands: { '30-70': [q[30], q[70]], '20-80': [q[20], q[80]], '10-90': [q[10], q[90]] } };
 }
-// rows: [{strike, ce_ltp, pe_ltp}] (the wide window); F forward; T years; closes oldest→newest daily index closes.
+// rows: [{strike, ce_ltp, pe_ltp}] (the wide window); F forward; T years; closes oldest→newest daily index closes;
+// paperN: settled paper trades so far, a number or {condor, strangle}.
 function tradeBands({ rows, F, T, closes, highEvent, idx, cfg, paperN }) {
   cfg = mergeConfig(cfg);
   const smile = fitSmile(rows, F, T);
   if (!smile) return { error: 'no usable option prices' };
   const regime = trendRegime(closes), fair = fairVol({ iv: smile.atm, closes, regime: regime.regime, highEvent, cfg });
   const bf = bandFinder({ rows, F, T, fairAtm: fair.vol, idx, cfg, smile });
-  const v = s => tradeVerdict({ structure: s, best: bf[s].best, regime: regime.regime, highEvent, paperN, cfg });
+  const pn = s => paperN && typeof paperN === 'object' ? paperN[s] || 0 : paperN || 0;
+  const v = s => tradeVerdict({ structure: s, best: bf[s].best, regime: regime.regime, highEvent, paperN: pn(s), cfg });
   const verdicts = { condor: v('condor'), strangle: v('strangle') }, rank = { TRADE: 2, 'PAPER-TRADE ONLY': 1, 'NO TRADE': 0 };
   const pick = rank[verdicts.strangle.verdict] > rank[verdicts.condor.verdict] ? 'strangle' : 'condor';
   return { F, T, smile: { atm: smile.atm, flat: smile.flat, n: smile.n }, regime, fair, sd: bf.sd, costPts: bf.costPts, lot: bf.lot,

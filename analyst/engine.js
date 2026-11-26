@@ -43,12 +43,15 @@ function toSnap(c) {
     options: c.rows.flatMap(r => [{ strike: r.strike, type: 'CE', ltp: r.ce_ltp, oi: r.ce_oi }, { strike: r.strike, type: 'PE', ltp: r.pe_ltp, oi: r.pe_oi }]) };
 }
 
+// Signals (max pain, walls, PCR, gamma pin) always use the ±3% strikes, exactly as the page does; the wider window is for trade bands.
+const signalRows = c => c.rows.filter(r => r.strike >= c.spot * 0.97 && r.strike <= c.spot * 1.03);
+
 function buildLock({ chain, nowMs, weights, cfg, overlay, events, prevLock, slot, htmlPath }) {
   const eng = loadEngine(htmlPath || DEFAULT_HTML);
   cfg = eng.mergeConfig(cfg);
   validateChain(chain);
   const now = eng.ist(nowMs);
-  const sig = eng.computeSignals(toSnap(chain), chain.oiPrev || null, chain.prevHLC || null, chain.close3 || null);
+  const sig = eng.computeSignals(toSnap({ ...chain, rows: signalRows(chain) }), chain.oiPrev || null, chain.prevHLC || null, chain.close3 || null);
   const bucket = eng.dteBucket(now.date, chain.expiry);
   const base = weights || { weights: eng.PRIOR[bucket], ...eng.PRIOR_K, version: 'uncalibrated', source: 'prior' };
   const ws = applyConfig(base, cfg, chain.idx);
@@ -76,4 +79,26 @@ function buildLock({ chain, nowMs, weights, cfg, overlay, events, prevLock, slot
   };
 }
 
-module.exports = { loadEngine, validateChain, applyConfig, buildLock, toSnap, get DEFAULT_CONFIG() { return JSON.parse(JSON.stringify(loadEngine(DEFAULT_HTML).DEFAULT_CONFIG)); } };
+// An event counts for a contract only if it falls on or before that expiry; an undated event counts (the cautious reading).
+function eventBefore(e, expiry) { const d = String((e && e.when) || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d <= expiry : true; }
+// Daily closes the page saved in latest/hist-<IDX>; older than 4 calendar days counts as missing (fair volatility = implied).
+function closesFor(history, idx, today) {
+  const h = history && history[idx];
+  if (!h || !Array.isArray(h.closes) || !h.asOf) return null;
+  return (Date.parse(today) - Date.parse(String(h.asOf).slice(0, 10))) / 864e5 <= 4 ? h.closes : null;
+}
+// One paper trade per contract per morning: the trade-band verdict and the best condor and strangle, priced at the lock's quotes.
+function buildTrade({ chain, lock, history, events, cfg, paperN, htmlPath }) {
+  const eng = loadEngine(htmlPath || DEFAULT_HTML), now = eng.ist(chain.takenMs);
+  const highEvent = (events || []).some(e => e.impact === 'high' && eventBefore(e, chain.expiry));
+  const closes = closesFor(history, chain.idx, now.date);
+  const tb = eng.tradeBands({ rows: chain.rows, F: lock.forward, T: eng.yearFrac(chain.takenMs, chain.expiry), closes, highEvent, idx: chain.idx, cfg, paperN });
+  const base = { id: `${lock.key}-${chain.expiry}-${now.date}`, key: lock.key, idx: chain.idx, kind: chain.kind, expiry: chain.expiry, date: now.date,
+    madeAt: chain.takenMs, lockId: lock.id, spot: chain.spot, forward: lock.forward };
+  if (tb.error) return { ...base, error: tb.error, today: { verdict: 'NO TRADE', reason: tb.error } };
+  const slim = b => b && { p: b.p, legs: b.legs, credit: b.credit, ev: b.ev, pop: b.pop, maxLoss: b.maxLoss, breakevens: b.breakevens, loss2: b.loss2, loss3: b.loss3, score: b.score, inside: b.inside };
+  return { ...base, sd: tb.sd, atmIv: tb.smile.atm, smileFlat: tb.smile.flat, fair: tb.fair, regime: tb.regime.regime, highEvent, historyUsed: !!closes,
+    lot: tb.lot, costPts: tb.costPts, condor: slim(tb.condor.best), strangle: slim(tb.strangle.best), verdicts: tb.verdicts, today: tb.today, range: tb.range };
+}
+
+module.exports = { loadEngine, validateChain, applyConfig, buildLock, buildTrade, eventBefore, closesFor, signalRows, toSnap, get DEFAULT_CONFIG() { return JSON.parse(JSON.stringify(loadEngine(DEFAULT_HTML).DEFAULT_CONFIG)); } };

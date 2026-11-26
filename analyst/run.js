@@ -6,8 +6,8 @@
 //   node analyst/run.js state  --dir DUMPDIR [--versions versions.json] --out state.json
 const fs = require('node:fs');
 const path = require('node:path');
-const { loadEngine, buildLock, DEFAULT_CONFIG } = require('./engine');
-const { scoreLock, postmortem, settleDue, proposals, applyApproved } = require('./learn');
+const { loadEngine, buildLock, buildTrade, DEFAULT_CONFIG } = require('./engine');
+const { scoreLock, postmortem, settleDue, proposals, applyApproved, settleTrade, paperCounts } = require('./learn');
 
 const HTML = path.join(__dirname, '..', 'artifact', 'fo_expiry_desk.html');
 const arg = n => { const i = process.argv.indexOf('--' + n); return i > 0 ? process.argv[i + 1] : undefined; };
@@ -58,6 +58,17 @@ function lockCmd() {
     made.push(lock);
   }
   for (const l of made) writes.push(w('locks', l.id, l, versions));
+  // Morning only: one paper trade per contract (kinds sharing an expiry share it). Never rewritten later, so the record has no hindsight.
+  const trades = [];
+  if ((input.slot || eng.ist(input.nowMs).hm) < '12:00') {
+    const done = new Set(), history = input.history || state.history || null;
+    input.chains.forEach((chain, i) => {
+      const k = `${chain.idx}|${chain.expiry}`;
+      if (done.has(k)) return; done.add(k);
+      const t = buildTrade({ chain, lock: made[i], history, events: input.events, cfg, paperN: paperCounts(state.tradescores, chain.idx), htmlPath: HTML });
+      if (!EXISTING.has('trades/' + t.id)) { trades.push(t); writes.push(w('trades', t.id, t, versions)); }
+    });
+  }
   writes.push(w('analyst', 'latest', {
     runMs: input.nowMs, slot: input.slot, events: input.events || [], notes: input.notes || '',
     overlays: Object.fromEntries(made.map(l => [l.key, { expiry: l.expiry, ...l.overlay, centre: l.centre, modelCentre: l.modelCentre, band68: l.band68, modelBand68: l.modelBand68 }])),
@@ -65,7 +76,7 @@ function lockCmd() {
     // reusable context (expiry list, verified event calendar, candles) so later runs can skip refetching it
     cache: input.cache || null,
   }, versions));
-  writes.push(w('runs', String(input.nowMs), { runMs: input.nowMs, kind: 'lock', slot: input.slot, status: 'ok', locks: made.map(l => l.id) }, versions));
+  writes.push(w('runs', String(input.nowMs), { runMs: input.nowMs, kind: 'lock', slot: input.slot, status: 'ok', locks: made.map(l => l.id), trades: trades.map(t => `${t.id}: ${t.today.verdict}`) }, versions));
   finish(arg('out'), writes);
 }
 
@@ -96,6 +107,8 @@ function settleCmd() {
       pm.id = `${d.idx}-${kind}-${d.expiry}`; pm.kind = kind;
       if (!EXISTING.has('postmortems/' + pm.id)) writes.push(w('postmortems', pm.id, pm, versions));
     }
+    for (const t of (state.trades || []).filter(t => t.idx === d.idx && t.expiry === d.expiry && !t.error))
+      if (!EXISTING.has('tradescores/' + t.id)) writes.push(w('tradescores', t.id, settleTrade(t, d.settlement), versions));
     touched.add(d.idx);
   }
   // 3. refit weights (model centre, shrinkage toward the prior) and raise proposals for every index that settled
@@ -122,11 +135,14 @@ function stateCmd() {
   const state = {
     config: cfg ? (({ id, ...c }) => c)(cfg) : undefined,
     weights: byId(read('weights')), locks: read('locks'), outcomes: byId(read('outcomes')), scores: read('scores'), proposals: read('proposals'),
+    trades: read('trades'), tradescores: read('tradescores'),
+    // daily closes the page saves once a day, for realised volatility and the trend filter
+    history: Object.fromEntries(read('latest').filter(x => x.id.startsWith('hist-')).map(x => [x.id.slice(5), { asOf: x.asOf, closes: x.closes }])),
     versions: arg('versions') && fs.existsSync(arg('versions')) ? readJson(arg('versions')) : {},
-    existing: ['locks', 'outcomes', 'scores', 'proposals', 'weights', 'config', 'postmortems', 'analyst'].flatMap(col => read(col).map(x => `${col}/${x.id}`)),
+    existing: ['locks', 'outcomes', 'scores', 'proposals', 'weights', 'config', 'postmortems', 'analyst', 'trades', 'tradescores'].flatMap(col => read(col).map(x => `${col}/${x.id}`)),
   };
   fs.writeFileSync(arg('out'), JSON.stringify(state));
-  console.log(`state: ${state.locks.length} locks, ${Object.keys(state.outcomes).length} outcomes, ${state.scores.length} scores, ${state.proposals.length} proposals, config ${cfg ? 'found' : 'default'}`);
+  console.log(`state: ${state.trades.length} trades, history ${Object.keys(state.history).join('/') || 'none'}, ${state.locks.length} locks, ${Object.keys(state.outcomes).length} outcomes, ${state.scores.length} scores, ${state.proposals.length} proposals, config ${cfg ? 'found' : 'default'}`);
 }
 
 try {

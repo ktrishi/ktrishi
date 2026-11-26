@@ -142,4 +142,20 @@ function applyApproved(cfg, approved, nowMs = Date.now()) {
   return { cfg: c, appliedIds };
 }
 
-module.exports = { classifyMiss, scoreLock, postmortem, settleDue, proposals, applyApproved, LESSON };
+// Paper-trade P&L at the settlement, net of the same costs the verdict assumed. taken = the verdict did not say NO TRADE.
+function settleTrade(t, settle) {
+  const intr = (l, S) => l.type === 'CE' ? Math.max(0, S - l.strike) : Math.max(0, l.strike - S);
+  const one = s => {
+    const b = t[s]; if (!b) return null;
+    const pts = b.legs.reduce((a, l) => a + l.side * (intr(l, settle) - l.price), 0) - (t.costPts || 0) * b.legs.length;
+    return { pts, rupees: pts * (t.lot || 1), win: pts > 0, taken: !!(t.verdicts && t.verdicts[s] && t.verdicts[s].verdict !== 'NO TRADE'), ev: b.ev, credit: b.credit };
+  };
+  return { id: t.id, idx: t.idx, kind: t.kind, key: t.key, expiry: t.expiry, date: t.date, settlement: settle, verdict: t.today && t.today.verdict,
+    condor: one('condor'), strangle: one('strangle') };
+}
+function paperCounts(tradeScores, idx) {
+  const mine = (tradeScores || []).filter(s => s.idx === idx);
+  return { condor: mine.filter(s => s.condor && s.condor.taken).length, strangle: mine.filter(s => s.strangle && s.strangle.taken).length };
+}
+
+module.exports = { classifyMiss, scoreLock, postmortem, settleDue, proposals, applyApproved, settleTrade, paperCounts, LESSON };
