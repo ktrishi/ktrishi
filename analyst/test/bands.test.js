@@ -54,7 +54,9 @@ test('smile fit recovers a quadratic smile and falls back to flat when sparse', 
   near(sm.atm, 0.13, 2e-3, 'atm');
   near(sm.at(24000), truth(24000), 3e-3, 'put wing');
   near(sm.at(26000), truth(26000), 3e-3, 'call wing');
-  near(sm.at(10000), sm.at(23500), 1e-9, 'flat beyond the quoted strikes');
+  const lo = 23500, h = 10, slope = (a, b) => (sm.at(b) - sm.at(a)) / (b - a);
+  near(slope(lo - h, lo), slope(lo, lo + h), 2e-6, 'no slope jump at the lowest quoted strike');
+  assert.ok(sm.at(10000) <= 3 * sm.atm + 1e-12, 'capped far out');
   const sparse = eng.fitSmile(rows.filter(r => Math.abs(r.strike - F) <= 100), F, T);
   assert.equal(sparse.flat, true);
   near(sparse.at(24000), sparse.atm, 1e-12);
@@ -99,10 +101,17 @@ test('band finder: rich options give positive EV, fairly priced options lose the
 
 test('verdict rules, in order, with one deciding reason', () => {
   const cfg = eng.mergeConfig({});
-  const good = { ev: 10, score: 0.08 }, v = o => eng.tradeVerdict({ structure: 'condor', best: good, regime: 'range', highEvent: false, paperN: 10, cfg, ...o });
+  const rec = (expiries, pnl, ev) => ({ expiries, pnl, ev, n: expiries * 3 });
+  const good = { ev: 10, score: 0.08 }, v = o => eng.tradeVerdict({ structure: 'condor', best: good, regime: 'range', highEvent: false, paper: rec(10, 3000, 4000), tdays: 4, cfg, ...o });
   assert.equal(v({}).verdict, 'TRADE');
-  assert.equal(v({ paperN: 3 }).verdict, 'PAPER-TRADE ONLY');
-  assert.match(v({ paperN: 3 }).reason, /3 of 8/);
+  assert.equal(v({ paper: rec(3, 900, 1000) }).verdict, 'PAPER-TRADE ONLY');
+  assert.match(v({ paper: rec(3, 900, 1000) }).reason, /3 of 8 expiries/);
+  assert.equal(v({ paper: rec(10, -500, 4000) }).verdict, 'PAPER-TRADE ONLY', 'losing paper record never unlocks TRADE');
+  assert.match(v({ paper: rec(10, -500, 4000) }).reason, /lost/);
+  assert.equal(v({ paper: rec(10, 1000, 4000) }).verdict, 'PAPER-TRADE ONLY', 'paper P&L far below what the model expected');
+  assert.equal(v({ highEvent: true }).verdict, 'NO TRADE', 'a high-impact event blocks even a positive EV');
+  assert.equal(v({ tdays: 0.6 }).verdict, 'NO TRADE');
+  assert.match(v({ tdays: 0.6 }).reason, /expiry day/);
   assert.equal(v({ regime: 'up' }).verdict, 'NO TRADE');
   assert.match(v({ regime: 'up' }).reason, /trend/);
   assert.equal(v({ highEvent: true, best: { ev: -1, score: -0.01 } }).verdict, 'NO TRADE');
@@ -110,13 +119,13 @@ test('verdict rules, in order, with one deciding reason', () => {
   assert.match(v({ best: { ev: -2, score: -0.02 } }).reason, /negative/);
   assert.match(v({ best: { ev: 1, score: 0.01 } }).reason, /thin/);
   assert.equal(v({ best: null }).verdict, 'NO TRADE');
-  assert.equal(eng.tradeVerdict({ structure: 'strangle', best: { ev: 5, score: 0.035 }, regime: 'range', highEvent: false, paperN: 9, cfg }).verdict, 'TRADE');
+  assert.equal(eng.tradeVerdict({ structure: 'strangle', best: { ev: 5, score: 0.035 }, regime: 'range', highEvent: false, paper: rec(9, 2000, 2500), tdays: 3, cfg }).verdict, 'TRADE');
 });
 
 test('trade bands end to end, with range view and a today verdict', () => {
   const F = 26000, T = 6 / 365, iv = 0.13, rows = chain(F, T, iv), cfg = eng.mergeConfig({});
   const closes = Array.from({ length: 260 }, (_, i) => 26000 * Math.exp(i % 2 ? 0.004 : 0)); // equal averages: range
-  const tb = eng.tradeBands({ rows, F, T, closes, highEvent: false, idx: 'NIFTY', cfg, paperN: 0 });
+  const tb = eng.tradeBands({ rows, F, T, closes, highEvent: false, idx: 'NIFTY', cfg, paper: null });
   assert.equal(tb.regime.regime, 'range');
   assert.ok(tb.fair.vol >= 0.8 * tb.smile.atm - 1e-12);
   const q = tb.range.q;
@@ -125,6 +134,65 @@ test('trade bands end to end, with range view and a today verdict', () => {
   assert.deepEqual(tb.range.bands['30-70'], [q[30], q[70]]);
   assert.ok(['TRADE', 'PAPER-TRADE ONLY', 'NO TRADE'].includes(tb.today.verdict));
   assert.notEqual(tb.today.verdict, 'TRADE', 'no paper record yet, so never TRADE');
-  const ev = eng.tradeBands({ rows, F, T, closes, highEvent: true, idx: 'NIFTY', cfg, paperN: 20 });
+  const ev = eng.tradeBands({ rows, F, T, closes, highEvent: true, idx: 'NIFTY', cfg, paper: { condor: { expiries: 20, pnl: 1e5, ev: 1e5 }, strangle: { expiries: 20, pnl: 1e5, ev: 1e5 } } });
   assert.equal(ev.today.verdict, 'NO TRADE');
+});
+
+test('trading time: Monday 09:45 to Tuesday expiry is 1.92 trading days', () => {
+  near(eng.tradingDaysFrac(Date.UTC(2026, 10, 30, 4, 15), '2026-12-01'), 1 + 345 / 375, 1e-9);
+  near(eng.tradingDaysFrac(Date.UTC(2026, 10, 27, 4, 15), '2026-12-01'), 2 + 345 / 375, 1e-9, 'Friday: weekend has no sessions');
+  near(eng.tradingDaysFrac(Date.UTC(2026, 11, 1, 10, 30), '2026-12-01'), 1 / 375, 1e-9, 'after the close on expiry day');
+});
+
+test('no false edge when options are priced at the true variance (trading-day vs calendar time)', () => {
+  // Monday 09:45 IST, Tuesday expiry. The index truly moves s per trading day; options price exactly that, no premium.
+  const nowMs = Date.UTC(2026, 10, 30, 4, 15), expiry = '2026-12-01', T = eng.yearFrac(nowMs, expiry), N = eng.tradingDaysFrac(nowMs, expiry);
+  const sDay = 0.0075, iv = sDay * Math.sqrt(N / T), F = 26000, rows = chain(F, T, iv);
+  const closes = [26000]; for (let i = 0; i < 259; i++) closes.push(closes[i] * Math.exp(i % 2 ? -sDay : sDay));
+  const tb = eng.tradeBands({ rows, F, T, tdays: N, closes, highEvent: false, idx: 'NIFTY', cfg: eng.mergeConfig({}), paper: null });
+  assert.ok(tb.fair.vol >= tb.smile.atm * 0.98, `fair ${tb.fair.vol} should match implied ${tb.smile.atm}`);
+  assert.equal(tb.verdicts.condor.verdict, 'NO TRADE'); assert.equal(tb.verdicts.strangle.verdict, 'NO TRADE');
+});
+
+test('skewed 27-day monthly: with fair = implied every structure loses exactly its costs', () => {
+  const F = 26000, T = 27 / 365, rows = [];
+  for (let K = Math.round(F * 0.93 / 50) * 50; K <= F * 1.07; K += 50) { const m = Math.log(K / F), v = 0.14 - 0.45 * m + 2.5 * m * m;
+    rows.push({ strike: K, ce_ltp: Math.round(eng.b76(F, K, T, v, 'CE') / 0.05) * 0.05, pe_ltp: Math.round(eng.b76(F, K, T, v, 'PE') / 0.05) * 0.05 }); }
+  for (const idx of ['NIFTY', 'BANKNIFTY']) {
+    const sm = eng.fitSmile(rows, F, T), b = eng.bandFinder({ rows, F, T, fairAtm: sm.atm, idx, cfg: eng.mergeConfig({}), smile: sm });
+    for (const c of [...b.condor.all, ...b.strangle.all]) near(c.ev, -b.costPts * c.legs.length, 0.05, `${idx} ${c.legs.length}-leg p=${c.p}`);
+  }
+});
+
+test('tail losses use the wider of implied and fair volatility', () => {
+  const F = 26000, T = 6 / 365, iv = 0.13, rows = chain(F, T, iv);
+  const b = eng.bandFinder({ rows, F, T, fairAtm: 0.8 * iv, idx: 'NIFTY', cfg: eng.mergeConfig({}) });
+  assert.ok(b.stressSd > b.sd * 1.1, 'stress sd is the implied one');
+  const s = b.strangle.best, pay = x => s.legs.reduce((a, l) => a + l.side * ((l.type === 'CE' ? Math.max(0, x - l.strike) : Math.max(0, l.strike - x)) - l.price), 0) - b.costPts * 2;
+  near(s.loss3, Math.min(pay(F - 3 * b.stressSd), pay(F + 3 * b.stressSd)), 1e-9);
+});
+
+test('shorts stay at or outside the 20/80 quantiles; too little history means no edge', () => {
+  const F = 26000, T = 6 / 365, iv = 0.13, rows = chain(F, T, iv), cfg = eng.mergeConfig({});
+  const b = eng.bandFinder({ rows, F, T, fairAtm: 0.8 * iv, idx: 'NIFTY', cfg });
+  assert.ok([...b.condor.all, ...b.strangle.all].every(c => c.p <= 0.2 + 1e-9));
+  const short = Array.from({ length: 120 }, (_, i) => 100 * Math.exp(i % 2 ? 0.002 : 0));
+  const fv = eng.fairVol({ iv: 0.2, closes: short, regime: 'unknown', highEvent: false, cfg });
+  assert.equal(fv.vol, 0.2); assert.equal(fv.source, 'iv');
+});
+
+test('event risk counts unconfirmed medium events and only those before expiry', () => {
+  const ev = [{ title: 'RBI policy', when: '2026-12-04', impact: 'high' }, { title: 'GDP (date unconfirmed)', when: '2026-11-30', impact: 'medium' }];
+  assert.equal(eng.eventRisk(ev, '2026-12-01'), true, 'unconfirmed medium counts');
+  assert.equal(eng.eventRisk([ev[0]], '2026-12-01'), false);
+  assert.equal(eng.eventRisk([ev[0]], '2026-12-08'), true);
+});
+
+test('paper record counts distinct expiries, not daily trades', () => {
+  const s = [];
+  for (const d of ['2026-11-19', '2026-11-20', '2026-11-21']) s.push({ idx: 'NIFTY', expiry: '2026-11-24', date: d, condor: { taken: true, rupees: 100, evRupees: 80 }, strangle: { taken: false, rupees: -50, evRupees: 10 } });
+  s.push({ idx: 'NIFTY', expiry: '2026-12-01', date: '2026-11-26', condor: { taken: true, rupees: -300, evRupees: 90 }, strangle: { taken: true, rupees: 40, evRupees: 30 } });
+  const r = eng.paperRecord(s, 'NIFTY');
+  assert.deepEqual(r.condor, { expiries: 2, n: 4, pnl: 0, ev: 330, worst: -300 });
+  assert.deepEqual(r.strangle, { expiries: 1, n: 1, pnl: 40, ev: 30, worst: 40 });
 });

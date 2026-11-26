@@ -59,12 +59,18 @@ Why the run is built this way:
 
 ## Trade bands (Today, Iron condor, Short strangle, Range view tabs)
 - **What it is.** An expected-value test of selling a range.
-  - Fair volatility = 0.5·RV10 + 0.3·RV20 + 0.2·RV60. It is floored at 0.8 × implied, raised ×1.15 in a strong trend, and set equal to implied when a high-impact event falls before expiry.
+  - Fair volatility = 0.5·RV10 + 0.3·RV20 + 0.2·RV60, restated from trading sessions to calendar time. It is floored at 0.8 × implied and raised ×1.15 in a strong trend. It is set equal to implied when a high-impact event falls before expiry or the history is too short.
   - The settlement distribution is the market's own, read from the option smile, centred on the forward and narrowed by implied − fair volatility.
-  - Short strikes are placed at the 10/90 to 30/70 quantiles. Profit is net of costs.
+  - Short strikes are placed at the 10/90 to 20/80 quantiles. EV counts only the volatility edge, after costs. Tail losses use the wider of fair and implied σ.
 - **Verdict.**
-  - NO TRADE in any of these cases: a strong trend, a high-impact event, negative EV, or a score below 4% of the condor's maximum loss or 3% of the strangle's 3σ loss.
-  - Otherwise PAPER-TRADE ONLY until 8 settled paper trades per index and structure, then TRADE.
+  - NO TRADE in any of these cases:
+    - a strong trend
+    - a high-impact event before expiry, or a medium one with an unconfirmed date
+    - expiry day
+    - stale prices
+    - negative EV
+    - a score below 4% of the condor's maximum loss or 3% of the strangle's 3σ loss
+  - Otherwise PAPER-TRADE ONLY. TRADE needs all of: 8 settled expiries per index and structure, a positive paper P&L, and at least half of the P&L the model expected.
 - **How to talk about it.** Report the verdict and its deciding reason as the engine gives them. Never present PAPER-TRADE ONLY as a trade recommendation.
   - Always state the tail: the strangle's 3σ loss per lot, or the condor's maximum loss.
   - Remind Rishi that prices are last-traded, not bid/ask.

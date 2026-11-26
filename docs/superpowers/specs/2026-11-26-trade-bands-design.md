@@ -68,6 +68,14 @@ A **Today** tab gives one trade / paper-trade / no-trade verdict per contract an
    - Left free, the optimiser drifts to p = 0.40, which is close to a short straddle.
    - An expiry-only payoff understates the day-to-day gamma and mark-to-market risk of near-the-money shorts.
 3. **Analyst weekly window ±5%, not ±4%.** The third weekly's wings fall outside ±4%. The analyst still uses 2 quote calls.
+4. **After the independent review:**
+   - **Fair volatility on calendar time.** Realised volatility is per trading session, but implied volatility is quoted on calendar T. Comparing them directly invented about a 20% edge over weekends.
+   - **Paper gate.** It counts distinct expiries, not daily trades, and needs a positive paper P&L of at least half what the model expected.
+   - **Smile extrapolation.** It follows the end tangent, so the density has no jump. EV counts only the volatility edge (`modelErr` removed), so fair = implied gives exactly −costs.
+   - **Tail losses at the wider of fair and implied σ.**
+   - **Shorts capped at 20/80.**
+   - **NO TRADE also applies** on expiry day, for any high-impact event, for an unconfirmed medium event, when history is too short, and when prices are stale. Expired contracts are dropped from the view.
+   - **History age limit of 4 calendar days** (not 3), so the Monday and post-holiday runs still have fresh closes.
 
 ## Non-goals
 Live Kite margin (not exposed by the connector), order placement, and any automatic trading.

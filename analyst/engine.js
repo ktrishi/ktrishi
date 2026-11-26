@@ -4,7 +4,7 @@ const fs = require('node:fs');
 
 const EXPORTS = ['UNDERLYINGS', 'PRIOR', 'PRIOR_K', 'SIGNALS', 'ist', 'closeMs', 'yearFrac', 'isLive', 'dteBucket', 'ncdf', 'b76',
   'impliedVol', 'computeSignals', 'predict', 'fmt', 'compare', 'scoreLocks', 'refit', 'trackRecord', 'percentile', 'clamp', 'applyConfig', 'mergeConfig', 'DEFAULT_CONFIG',
-  'realizedVol', 'trendRegime', 'fairVol', 'fitSmile', 'impliedDist', 'gridCdf', 'gridQuantile', 'evalLegs', 'bandFinder', 'tradeVerdict', 'rangeView', 'tradeBands', 'eventBefore', 'closesFor', 'paperCounts'];
+  'realizedVol', 'trendRegime', 'fairVol', 'fitSmile', 'impliedDist', 'gridCdf', 'gridQuantile', 'evalLegs', 'bandFinder', 'tradeVerdict', 'rangeView', 'tradeBands', 'eventBefore', 'closesFor', 'paperRecord', 'eventRisk', 'tradingDaysFrac'];
 
 const DEFAULT_HTML = require('node:path').join(__dirname, '..', 'artifact', 'fo_expiry_desk.html');
 
@@ -80,16 +80,17 @@ function buildLock({ chain, nowMs, weights, cfg, overlay, events, prevLock, slot
 }
 
 // One paper trade per contract per morning: the trade-band verdict and the best condor and strangle, priced at the lock's quotes.
-function buildTrade({ chain, lock, history, events, cfg, paperN, htmlPath }) {
+function buildTrade({ chain, lock, history, events, cfg, paper, htmlPath }) {
   const eng = loadEngine(htmlPath || DEFAULT_HTML), now = eng.ist(chain.takenMs);
-  const highEvent = (events || []).some(e => e.impact === 'high' && eng.eventBefore(e, chain.expiry));
+  const highEvent = eng.eventRisk(events, chain.expiry);
   const closes = eng.closesFor(history, chain.idx, now.date);
-  const tb = eng.tradeBands({ rows: chain.rows, F: lock.forward, T: eng.yearFrac(chain.takenMs, chain.expiry), closes, highEvent, idx: chain.idx, cfg, paperN });
+  const tb = eng.tradeBands({ rows: chain.rows, F: lock.forward, T: eng.yearFrac(chain.takenMs, chain.expiry), tdays: eng.tradingDaysFrac(chain.takenMs, chain.expiry),
+    closes, highEvent, idx: chain.idx, cfg, paper });
   const base = { id: `${lock.key}-${chain.expiry}-${now.date}`, key: lock.key, idx: chain.idx, kind: chain.kind, expiry: chain.expiry, date: now.date,
     madeAt: chain.takenMs, lockId: lock.id, spot: chain.spot, forward: lock.forward };
   if (tb.error) return { ...base, error: tb.error, today: { verdict: 'NO TRADE', reason: tb.error } };
   const slim = b => b && { p: b.p, legs: b.legs, credit: b.credit, ev: b.ev, pop: b.pop, maxLoss: b.maxLoss, breakevens: b.breakevens, loss2: b.loss2, loss3: b.loss3, score: b.score, inside: b.inside };
-  return { ...base, sd: tb.sd, atmIv: tb.smile.atm, smileFlat: tb.smile.flat, fair: tb.fair, regime: tb.regime.regime, highEvent, historyUsed: !!closes,
+  return { ...base, sd: tb.sd, stressSd: tb.stressSd, tdays: tb.tdays, atmIv: tb.smile.atm, smileFlat: tb.smile.flat, fair: tb.fair, regime: tb.regime.regime, highEvent, historyUsed: !!closes,
     lot: tb.lot, costPts: tb.costPts, condor: slim(tb.condor.best), strangle: slim(tb.strangle.best), verdicts: tb.verdicts, today: tb.today, range: tb.range };
 }
 

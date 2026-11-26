@@ -384,7 +384,7 @@ function trackRecord(rows) {
     cov90: b90.length ? b90.filter(r => r.in90).length / b90.length : null, beats: mae < fmae };
 }
 const DEFAULT_CONFIG = { kScale: { NIFTY: 1, BANKNIFTY: 1 }, eventBandMax: 1.3, nudgeCapSigma: 0.25, dropped: { NIFTY: [], BANKNIFTY: [] }, forwardFloor: { NIFTY: 0, BANKNIFTY: 0 },
-  trade: { feePerLegLot: 60, slip: { NIFTY: 1, BANKNIFTY: 3 }, volFloor: 0.8, trendMult: 1.15, condorMin: 0.04, strangleMin: 0.03, minPaper: 8, pMin: 0.10, pMax: 0.30 } };
+  trade: { feePerLegLot: 60, slip: { NIFTY: 1, BANKNIFTY: 3 }, volFloor: 0.8, trendMult: 1.15, condorMin: 0.04, strangleMin: 0.03, minPaper: 8, paperMinRatio: 0.5, pMin: 0.10, pMax: 0.20 } };
 function mergeConfig(cfg) {
   const d = DEFAULT_CONFIG, c = cfg || {};
   return { kScale: { ...d.kScale, ...(c.kScale || {}) }, eventBandMax: +c.eventBandMax || d.eventBandMax,
@@ -424,11 +424,24 @@ function trendRegime(closes) {
   const r = c > d20 && d20 > d50 && d50 > d200 && d20 > d20p ? 'up' : c < d20 && d20 < d50 && d50 < d200 && d20 < d20p ? 'down' : 'range';
   return { regime: r, close: c, d20, d50, d200 };
 }
-function fairVol({ iv, closes, regime, highEvent, cfg }) {
+// Trading sessions left to expiry: today's remaining share of 09:15–15:30 plus each later weekday up to the expiry.
+// (Exchange holidays are not known here; counting them as sessions slightly overstates fair volatility, the safe side.)
+function tradingDaysFrac(nowMs, expiry) {
+  const now = ist(nowMs), [h, m] = now.hm.split(':').map(Number), mins = h * 60 + m;
+  const today = now.dow > 0 && now.dow < 6 && now.date <= expiry ? clamp((930 - Math.max(mins, 555)) / 375, 0, 1) : 0;
+  let n = 0; const d = new Date(now.date + 'T00:00:00Z'), e = new Date(expiry + 'T00:00:00Z');
+  while (d < e) { d.setUTCDate(d.getUTCDate() + 1); const w = d.getUTCDay(); if (w > 0 && w < 6) n++; }
+  return Math.max(n + today, 1 / 375);
+}
+// Realised volatility is per trading day (252 a year); implied volatility is quoted on calendar time T. To compare them,
+// fair volatility is restated on T: same variance to expiry, so vol_cal = rv * sqrt((tradingDaysLeft / 252) / T).
+function fairVol({ iv, closes, regime, highEvent, cfg, tdays, T }) {
   if (!(iv > 0)) return null;
   const t = mergeConfig(cfg).trade, rv10 = realizedVol(closes, 10), rv20 = realizedVol(closes, 20), rv60 = realizedVol(closes, 60);
   if (rv10 == null || rv20 == null || rv60 == null) return { vol: iv, source: 'iv', rv10, rv20, rv60, blend: null, note: 'no price history, so fair volatility = implied (no edge assumed)' };
-  const blend = 0.5 * rv10 + 0.3 * rv20 + 0.2 * rv60, notes = [];
+  if (regime === 'unknown') return { vol: iv, source: 'iv', rv10, rv20, rv60, blend: null, note: 'too little history for the trend filter, so fair volatility = implied (no edge assumed)' };
+  const scale = tdays > 0 && T > 0 ? Math.sqrt(tdays / 252 / T) : 1;
+  const blend = (0.5 * rv10 + 0.3 * rv20 + 0.2 * rv60) * scale, notes = [];
   let vol = blend;
   if (vol < t.volFloor * iv) { vol = t.volFloor * iv; notes.push(`realised ${(blend * 100).toFixed(1)}% is below the floor of ${Math.round(t.volFloor * 100)}% of implied`); }
   if (regime === 'up' || regime === 'down') { vol *= t.trendMult; notes.push(`strong ${regime}-trend: fair volatility raised ${Math.round((t.trendMult - 1) * 100)}%`); }
@@ -456,7 +469,9 @@ function fitSmile(rows, F, T) {
   const co = [0, 1, 2].map(k => det(S.map((row, i) => row.map((x, j) => j === k ? b[i] : x))) / D);
   const mLo = Math.min(...pts.map(p => p.m)), mHi = Math.max(...pts.map(p => p.m)), atm = co[0];
   if (!(atm > 0)) return flat(atmPt.iv);
-  const at = K => { const m = clamp(Math.log(K / F), mLo, mHi); return clamp(co[0] + co[1] * m + co[2] * m * m, 0.5 * atm, 3 * atm); };
+  // beyond the quoted strikes continue along the end tangent, so the slope (and the implied density) has no jump there
+  const q = m => co[0] + co[1] * m + co[2] * m * m, dq = m => co[1] + 2 * co[2] * m;
+  const at = K => { const m = Math.log(K / F), v = m < mLo ? q(mLo) + dq(mLo) * (m - mLo) : m > mHi ? q(mHi) + dq(mHi) * (m - mHi) : q(m); return clamp(v, 0.5 * atm, 3 * atm); };
   return { flat: false, atm, at, n: pts.length, coef: co };
 }
 // Distribution of the settlement implied by a smile: CDF(K) = dPut/dK = N(-d2) + vega * dvol/dK.
@@ -487,12 +502,16 @@ function gridQuantile(g, p) {
   return g.x[g.x.length - 1];
 }
 // legs: [{type:'CE'|'PE', strike, side:+1 long|-1 short, price}]; payoff per unit at expiry, net of costPts per leg.
-function evalLegs(legs, g, { costPts = 0, F, sd }) {
+// ref: the same smile at implied volatility. Its expected payoff is the model's own price error versus the quotes
+// (fit, extrapolation, stale prices); subtracting it leaves only the volatility edge, so fair = implied gives EV = -costs.
+function evalLegs(legs, g, { costPts = 0, F, sd, ref }) {
   const intr = (l, S) => l.type === 'CE' ? Math.max(0, S - l.strike) : Math.max(0, l.strike - S);
-  const pay = S => legs.reduce((a, l) => a + l.side * (intr(l, S) - l.price), 0) - costPts * legs.length;
+  const gross = S => legs.reduce((a, l) => a + l.side * (intr(l, S) - l.price), 0), pay = S => gross(S) - costPts * legs.length;
   const credit = -legs.reduce((a, l) => a + l.side * l.price, 0);
   let ev = 0, pop = 0;
   for (let i = 0; i < g.x.length; i++) { const v = pay(g.x[i]); ev += g.w[i] * v; if (v > 0) pop += g.w[i]; }
+  let modelErr = 0;
+  if (ref) { for (let i = 0; i < ref.x.length; i++) modelErr += ref.w[i] * gross(ref.x[i]); ev -= modelErr; }
   const ks = [...new Set(legs.map(l => l.strike))].sort((a, b) => a - b), top = 3 * Math.max(F, ks[ks.length - 1]);
   const bp = [0, ...ks, top], breakevens = [];
   for (let i = 1; i < bp.length; i++) {
@@ -503,7 +522,7 @@ function evalLegs(legs, g, { costPts = 0, F, sd }) {
   }
   const unlimited = legs.filter(l => l.type === 'CE').reduce((a, l) => a + l.side, 0) < 0;
   const worst = Math.min(...bp.map(pay));
-  return { credit, ev, pop, breakevens: breakevens.map(x => Math.round(x * 100) / 100), maxLoss: unlimited ? null : Math.max(0, -worst),
+  return { credit, ev, pop, modelErr, breakevens: breakevens.map(x => Math.round(x * 100) / 100), maxLoss: unlimited ? null : Math.max(0, -worst),
     loss2: Math.min(pay(F - 2 * sd), pay(F + 2 * sd)), loss3: Math.min(pay(F - 3 * sd), pay(F + 3 * sd)), unlimited };
 }
 function bandFinder({ rows, F, T, fairAtm, idx, cfg, smile }) {
@@ -511,57 +530,62 @@ function bandFinder({ rows, F, T, fairAtm, idx, cfg, smile }) {
   smile = smile || fitSmile(rows, F, T);
   if (!smile || !(fairAtm > 0)) return null;
   const shift = smile.atm - fairAtm, volAt = K => Math.max(smile.at(K) - shift, 0.5 * smile.at(K));
-  const g = impliedDist({ F, T, volAt }), sd = g.sd;
+  const g = impliedDist({ F, T, volAt }), sd = g.sd, gIv = impliedDist({ F, T, volAt: K => smile.at(K) });
+  const stressSd = Math.max(sd, gIv.sd); // tail losses at the wider of fair and implied σ
   const lot = u.lot || 1, costPts = (t.slip[idx] || 1) + t.feePerLegLot / lot;
   const puts = rows.filter(r => r.strike < F && r.pe_ltp >= 0.5), calls = rows.filter(r => r.strike > F && r.ce_ltp >= 0.5);
   const nearest = (xs, target) => xs.reduce((a, r) => !a || Math.abs(r.strike - target) < Math.abs(a.strike - target) ? r : a, null);
   const condors = [], strangles = [], seen = new Set();
-  // Shorts no closer than the 30/70 quantiles: nearer the money the expiry-only payoff understates day-to-day (gamma) risk.
+  // Shorts no closer than the pMax quantile (20/80 by default): EV per unit of risk always rises toward the money, but an
+  // expiry-only payoff understates the day-to-day (gamma, mark-to-market) risk of near-the-money shorts.
   for (let p = t.pMin; p <= t.pMax + 1e-9; p += 0.05) {
     const sp = nearest(puts, gridQuantile(g, p)), sc = nearest(calls, gridQuantile(g, 1 - p));
     if (!sp || !sc || seen.has(sp.strike + '|' + sc.strike)) continue;
     seen.add(sp.strike + '|' + sc.strike);
     const legsS = [{ type: 'PE', strike: sp.strike, side: -1, price: sp.pe_ltp }, { type: 'CE', strike: sc.strike, side: -1, price: sc.ce_ltp }];
     const inside = gridCdf(g, sc.strike) - gridCdf(g, sp.strike), base = { p: Math.round(p * 100) / 100, inside };
-    const ms = evalLegs(legsS, g, { costPts, F, sd });
+    const ms = evalLegs(legsS, g, { costPts, F, sd: stressSd, ref: gIv });
     strangles.push({ ...base, legs: legsS, ...ms, score: ms.loss3 < 0 ? ms.ev / -ms.loss3 : null });
-    const lp = nearest(rows.filter(r => r.strike < sp.strike && r.pe_ltp > 0), sp.strike - 0.5 * sd), lc = nearest(rows.filter(r => r.strike > sc.strike && r.ce_ltp > 0), sc.strike + 0.5 * sd);
+    const lp = nearest(rows.filter(r => r.strike < sp.strike && r.pe_ltp >= 0.5), sp.strike - 0.5 * sd), lc = nearest(rows.filter(r => r.strike > sc.strike && r.ce_ltp >= 0.5), sc.strike + 0.5 * sd);
     if (!lp || !lc) continue;
     const legsC = [{ type: 'PE', strike: lp.strike, side: 1, price: lp.pe_ltp }, ...legsS, { type: 'CE', strike: lc.strike, side: 1, price: lc.ce_ltp }];
-    const mc = evalLegs(legsC, g, { costPts, F, sd });
+    const mc = evalLegs(legsC, g, { costPts, F, sd: stressSd, ref: gIv });
     condors.push({ ...base, legs: legsC, ...mc, score: mc.maxLoss > 0 ? mc.ev / mc.maxLoss : null });
   }
   const best = xs => xs.filter(x => x.score != null).reduce((a, x) => !a || x.score > a.score || (x.score === a.score && x.pop > a.pop) ? x : a, null);
-  return { grid: g, sd, shift, costPts, lot, condor: { best: best(condors), all: condors }, strangle: { best: best(strangles), all: strangles } };
+  return { grid: g, sd, stressSd, shift, costPts, lot, condor: { best: best(condors), all: condors }, strangle: { best: best(strangles), all: strangles } };
 }
-function tradeVerdict({ structure, best, regime, highEvent, paperN, cfg }) {
+function tradeVerdict({ structure, best, regime, highEvent, paper, tdays, cfg }) {
   const t = mergeConfig(cfg).trade, min = structure === 'condor' ? t.condorMin : t.strangleMin, per = structure === 'condor' ? 'maximum loss' : 'the loss on a 3σ move';
-  const no = reason => ({ verdict: 'NO TRADE', reason });
+  const no = reason => ({ verdict: 'NO TRADE', reason }), paperOnly = reason => ({ verdict: 'PAPER-TRADE ONLY', reason });
   if (!best) return no('no liquid strikes to build it from');
   if (regime === 'up' || regime === 'down') return no(`strong ${regime}-trend (price beyond rising 20/50/200-day averages): ranges break in trends`);
-  if (highEvent && !(best.ev > 0)) return no('high-impact event before expiry: options are priced for it, so there is no edge');
+  if (highEvent) return no('high-impact event before expiry: a range sold into it can break, and options are priced for it');
+  if (tdays != null && tdays < 1) return no('expiry day: too little time left and too much gamma to open a new short range');
   if (!(best.ev > 0)) return no('expected value after costs is negative: options are not rich enough versus realised movement');
   if (!(best.score >= min)) return no(`edge too thin: expected profit is ${(best.score * 100).toFixed(1)}% of ${per} (needs ${Math.round(min * 100)}%)`);
-  if ((paperN || 0) < t.minPaper) return { verdict: 'PAPER-TRADE ONLY', reason: `edge found, but only ${paperN || 0} of ${t.minPaper} paper trades have settled for this index` };
-  return { verdict: 'TRADE', reason: `expected profit ${(best.score * 100).toFixed(1)}% of ${per}, ${Math.round(best.pop * 100)}% chance of profit` };
+  const pr = paper || { expiries: 0, pnl: 0, ev: 0 }, rs = x => (x < 0 ? '−' : '') + '₹' + Math.abs(Math.round(x)).toLocaleString('en-IN');
+  if (pr.expiries < t.minPaper) return paperOnly(`edge found, but only ${pr.expiries} of ${t.minPaper} expiries have settled on paper for this index`);
+  if (!(pr.pnl > 0)) return paperOnly(`edge found, but the paper trades have lost ${rs(-pr.pnl)} per lot so far`);
+  if (pr.ev > 0 && pr.pnl < t.paperMinRatio * pr.ev) return paperOnly(`edge found, but paper profit ${rs(pr.pnl)} is under half of the ${rs(pr.ev)} the model expected`);
+  return { verdict: 'TRADE', reason: `expected profit ${(best.score * 100).toFixed(1)}% of ${per}, ${Math.round(best.pop * 100)}% chance of profit; paper record ${rs(pr.pnl)} over ${pr.expiries} expiries` };
 }
 function rangeView(g) {
   const q = Object.fromEntries([10, 20, 30, 50, 70, 80, 90].map(p => [p, gridQuantile(g, p / 100)]));
   return { q, bands: { '30-70': [q[30], q[70]], '20-80': [q[20], q[80]], '10-90': [q[10], q[90]] } };
 }
-// rows: [{strike, ce_ltp, pe_ltp}] (the wide window); F forward; T years; closes oldest→newest daily index closes;
-// paperN: settled paper trades so far, a number or {condor, strangle}.
-function tradeBands({ rows, F, T, closes, highEvent, idx, cfg, paperN }) {
+// rows: [{strike, ce_ltp, pe_ltp}] (the wide window); F forward; T calendar years; tdays trading sessions left;
+// closes oldest→newest daily index closes; paper: paperRecord(...) for this index.
+function tradeBands({ rows, F, T, tdays, closes, highEvent, idx, cfg, paper }) {
   cfg = mergeConfig(cfg);
   const smile = fitSmile(rows, F, T);
   if (!smile) return { error: 'no usable option prices' };
-  const regime = trendRegime(closes), fair = fairVol({ iv: smile.atm, closes, regime: regime.regime, highEvent, cfg });
+  const regime = trendRegime(closes), fair = fairVol({ iv: smile.atm, closes, regime: regime.regime, highEvent, cfg, tdays, T });
   const bf = bandFinder({ rows, F, T, fairAtm: fair.vol, idx, cfg, smile });
-  const pn = s => paperN && typeof paperN === 'object' ? paperN[s] || 0 : paperN || 0;
-  const v = s => tradeVerdict({ structure: s, best: bf[s].best, regime: regime.regime, highEvent, paperN: pn(s), cfg });
+  const v = s => tradeVerdict({ structure: s, best: bf[s].best, regime: regime.regime, highEvent, paper: paper && paper[s], tdays, cfg });
   const verdicts = { condor: v('condor'), strangle: v('strangle') }, rank = { TRADE: 2, 'PAPER-TRADE ONLY': 1, 'NO TRADE': 0 };
   const pick = rank[verdicts.strangle.verdict] > rank[verdicts.condor.verdict] ? 'strangle' : 'condor';
-  return { F, T, smile: { atm: smile.atm, flat: smile.flat, n: smile.n }, regime, fair, sd: bf.sd, costPts: bf.costPts, lot: bf.lot,
+  return { F, T, tdays: tdays ?? null, smile: { atm: smile.atm, flat: smile.flat, n: smile.n }, regime, fair, sd: bf.sd, stressSd: bf.stressSd, costPts: bf.costPts, lot: bf.lot,
     condor: bf.condor, strangle: bf.strangle, range: rangeView(bf.grid), verdicts, today: { structure: pick, ...verdicts[pick] } };
 }
 // An event counts for a contract only if it falls on or before that expiry; an undated event counts (the cautious reading).
@@ -572,10 +596,19 @@ function closesFor(history, idx, today) {
   if (!h || !Array.isArray(h.closes) || !h.asOf) return null;
   return (Date.parse(today) - Date.parse(String(h.asOf).slice(0, 10))) / 864e5 <= 4 ? h.closes : null;
 }
-// Settled paper trades the verdict did not reject, per structure: the count that unlocks a TRADE verdict.
-function paperCounts(tradeScores, idx) {
-  const mine = (tradeScores || []).filter(s => s.idx === idx);
-  return { condor: mine.filter(s => s.condor && s.condor.taken).length, strangle: mine.filter(s => s.strangle && s.strangle.taken).length };
+// Event risk for one contract: a high-impact event on or before its expiry, or a medium one whose date could not be
+// confirmed (the analyst downgrades those one level, which must not let them slip past the trade filter).
+function eventRisk(events, expiry) {
+  return (events || []).some(e => e && eventBefore(e, expiry) && (e.impact === 'high' || (e.impact === 'medium' && /unconfirmed/i.test(e.title || ''))));
+}
+// Paper record per structure from settled paper trades the verdict did not reject. One expiry yields a trade every morning,
+// so the gate counts distinct expiries, and P&L must be positive and near what the model expected.
+function paperRecord(tradeScores, idx) {
+  const mine = (tradeScores || []).filter(s => s.idx === idx), one = st => {
+    const t = mine.filter(s => s[st] && s[st].taken), r = t.map(s => +s[st].rupees || 0);
+    return { expiries: new Set(t.map(s => s.expiry)).size, n: t.length, pnl: r.reduce((a, b) => a + b, 0), ev: t.reduce((a, s) => a + (+s[st].evRupees || 0), 0), worst: r.length ? Math.min(...r) : null };
+  };
+  return { condor: one('condor'), strangle: one('strangle') };
 }
 /*ENGINE-END*/
 
@@ -710,9 +743,9 @@ async function refreshUnderlying(u, now) {
     const strikes = [...new Set(sigSnap.options.map(o => o.strike))].sort((a, b) => a - b);
     const ce = Object.fromEntries(sigSnap.options.filter(o => o.type === 'CE').map(o => [o.strike, o.oi])), pe = Object.fromEntries(sigSnap.options.filter(o => o.type === 'PE').map(o => [o.strike, o.oi]));
     const wide = new Map(); for (const o of snap.options) { const r = wide.get(o.strike) || { strike: o.strike, ce_ltp: 0, pe_ltp: 0, ce_oi: 0, pe_oi: 0 }; r[o.type === 'CE' ? 'ce_ltp' : 'pe_ltp'] = o.ltp; r[o.type === 'CE' ? 'ce_oi' : 'pe_oi'] = o.oi; wide.set(o.strike, r); }
-    const highEvent = ((S.analyst && S.analyst.events) || []).some(e => e.impact === 'high' && eventBefore(e, exp));
+    const highEvent = eventRisk((S.analyst && S.analyst.events) || [], exp);
     let bands;
-    try { bands = { ...tradeBands({ rows: [...wide.values()].sort((a, b) => a.strike - b.strike), F: sig.forward, T: yearFrac(snap.takenMs, exp), closes, highEvent, idx: u.name, cfg: S.config, paperN: paperCounts(S.tradescores, u.name) }), highEvent, eventsMs: S.analyst ? S.analyst.runMs || null : null }; }
+    try { bands = { ...tradeBands({ rows: [...wide.values()].sort((a, b) => a.strike - b.strike), F: sig.forward, T: yearFrac(snap.takenMs, exp), tdays: tradingDaysFrac(snap.takenMs, exp), closes, highEvent, idx: u.name, cfg: S.config, paper: paperRecord(S.tradescores, u.name) }), highEvent, eventsMs: S.analyst ? S.analyst.runMs || null : null }; }
     catch (e) { bands = { error: 'could not compute trade bands: ' + (e && e.message || e) }; }
     const panel = {
       key, underlying: u.name, label: u.label, kind, expiry: exp, futExpiry: futExp, dataMs: Date.now(), spotTs: spotTs ? String(spotTs) : null,
@@ -930,10 +963,19 @@ const VCLS = { TRADE: 'p-good', 'PAPER-TRADE ONLY': 'p-warn', 'NO TRADE': 'p-neu
 const vpill = v => `<span class="pill ${VCLS[v] || 'p-neutral'}">${esc(v || '—')}</span>`;
 const rup = x => x == null || !isFinite(x) ? '—' : (x < 0 ? '−' : '') + '₹' + Math.abs(Math.round(x)).toLocaleString('en-IN');
 const pts = x => x == null || !isFinite(x) ? '—' : (x < 0 ? '−' : '') + Math.abs(x).toFixed(1);
+// A verdict is only as good as its prices: an expired contract is dropped, and stale prices force NO TRADE.
+function bandState(p, now) {
+  const b = p.bands; if (!b || b.error) return b;
+  const market = now.dow > 0 && now.dow < 6 && now.hm >= '09:15' && now.hm <= '15:30', age = Date.now() - (p.dataMs || 0);
+  const stale = market && age > 15 * 60e3 ? `prices are from ${tlabel(p.dataMs)} IST, more than 15 minutes old` : !market && age > 20 * 3600e3 ? `prices are from ${dtlabel(p.dataMs)} IST` : null;
+  if (!stale) return b;
+  const st = { verdict: 'NO TRADE', reason: stale + '; press Refresh for a live verdict' };
+  return { ...b, stale, verdicts: { condor: st, strangle: st }, today: { ...b.today, ...st } };
+}
 function bandPanels() {
-  const out = [], seen = new Map();
+  const out = [], seen = new Map(), now = ist();
   for (const u of UNDERLYINGS) for (const k of u.kinds) {
-    const p = S.panels[`${u.name}-${k}`]; if (!p) continue;
+    const p = S.panels[`${u.name}-${k}`]; if (!p || !isLive(p.expiry, now)) continue;
     const id = u.name + '|' + p.expiry;
     if (seen.has(id)) { seen.get(id).also.push(KIND[k]); continue; }
     const row = { p, u, kind: k, also: [] }; seen.set(id, row); out.push(row);
@@ -958,21 +1000,21 @@ const CAVEAT = 'Priced at last traded prices from the chain; check the live bid/
 function todayView() {
   const rows = bandPanels();
   if (!rows.length) return `<div class="card empty">${S.busy || !S.err ? 'Fetching the live option chains from Kite…' : 'No data yet. Press Refresh once Kite is connected.'}</div>`;
-  const now = ist(), vs = rows.map(r => r.p.bands && r.p.bands.today ? r.p.bands.today.verdict : null);
+  const now = ist(), vs = rows.map(r => { const b = bandState(r.p, now); return b && b.today ? b.today.verdict : null; });
   const nT = vs.filter(v => v === 'TRADE').length, nP = vs.filter(v => v === 'PAPER-TRADE ONLY').length;
   const head = nT ? `${nT} contract${nT > 1 ? 's' : ''} pass every test` : nP ? `No live trade. ${nP} contract${nP > 1 ? 's show' : ' shows'} an edge worth paper-trading` : 'No trade today on any contract';
-  const pc = Object.fromEntries(UNDERLYINGS.map(u => [u.name, paperCounts(S.tradescores, u.name)]));
+  const pc = Object.fromEntries(UNDERLYINGS.map(u => [u.name, paperRecord(S.tradescores, u.name)])), cfgT = mergeConfig(S.config).trade;
   return `<section class="card today"><h3>Trade or no trade: ${esc(head)}</h3>
     <div class="sub">Selling a range (iron condor or short strangle) pays only when options are priced above the movement we expect. Live from the chain at ${S.dataMs ? tlabel(S.dataMs) : '—'} IST; the analyst records a paper trade for each contract at 09:40.</div>
     <div class="tdl">
-    ${rows.map(r => { const b = r.p.bands, t = b && b.today, ok = b && !b.error; const tdl = tradingDaysLeft(now.date, r.p.expiry);
+    ${rows.map(r => { const b = bandState(r.p, now), t = b && b.today, ok = b && !b.error; const tdl = tradingDaysLeft(now.date, r.p.expiry);
       const meta = ok ? [edgeText(b), esc({ up: 'strong up-trend', down: 'strong down-trend', range: 'no strong trend', unknown: 'trend unknown (no history)' }[b.regime.regime] || b.regime.regime),
         b.highEvent ? '<span class="pill p-bad">High-impact event before expiry</span>' : 'no high-impact event found'].join(' · ') : '';
       return `<div class="tdrow"><div><b>${esc(bandLabel(r))}</b><small class="mut">${dlabel(r.p.expiry)} · ${tdl === 0 ? 'expires today' : tdl + ' trading day' + (tdl === 1 ? '' : 's') + ' left'}</small></div>
         <div>${t ? vpill(t.verdict) + `<small class="mut">best: ${t.structure === 'condor' ? 'iron condor' : 'short strangle'}</small>` : '<span class="mut">—</span>'}</div>
         <div class="tdw">${t ? esc(t.reason.charAt(0).toUpperCase() + t.reason.slice(1)) : esc((b && b.error) || 'Bands appear after the next refresh.')}${meta ? `<small class="mut">${meta}</small>` : ''}</div></div>`; }).join('')}
     </div>
-    <p class="note" style="margin:10px 0 0">Paper record so far: ${UNDERLYINGS.map(u => `${u.label} ${pc[u.name].condor} condor, ${pc[u.name].strangle} strangle`).join(' · ')} settled (8 of each needed before any verdict can say TRADE). ${CAVEAT}</p></section>
+    <p class="note" style="margin:10px 0 0">Paper record so far: ${UNDERLYINGS.map(u => `${u.label} condor ${pc[u.name].condor.expiries} expir${pc[u.name].condor.expiries === 1 ? 'y' : 'ies'} (${rup(pc[u.name].condor.pnl)}/lot), strangle ${pc[u.name].strangle.expiries} (${rup(pc[u.name].strangle.pnl)}/lot)`).join(' · ')}. TRADE needs ${cfgT.minPaper} settled expiries per index and structure, a paper profit, and at least half the profit the model expected. ${CAVEAT}</p></section>
     <div class="grid" style="margin-top:14px">
       <div class="card s4"><h3>Iron condor</h3><div class="sub">Defined risk: sell a put and a call, buy wings further out.</div><p class="note" style="margin:0">Loss is capped at the wing width less the credit. The tab shows the best strikes, the payoff and every candidate.</p></div>
       <div class="card s4"><h3>Short strangle</h3><div class="sub">More credit, loss not capped.</div><p class="note" style="margin:0">Judged on the loss of a 3σ move, not on win rate. Only for capital that can take a gap.</p></div>
@@ -981,20 +1023,20 @@ function todayView() {
 function structView(kind) {
   const sel = tbSelector(), p = S.panels[S.tbSel];
   if (!p) return `<div class="card empty">No data yet. Press Refresh once Kite is connected.</div>`;
-  const b = p.bands, u = UNDERLYINGS.find(x => x.name === p.underlying), name = kind === 'condor' ? 'Iron condor' : 'Short strangle';
+  const b = bandState(p, ist()), u = UNDERLYINGS.find(x => x.name === p.underlying), name = kind === 'condor' ? 'Iron condor' : 'Short strangle';
   if (!b || b.error) return sel + `<div class="card empty">${esc((b && b.error) || 'Trade bands appear after the next refresh.')}</div>`;
   const best = b[kind].best, v = b.verdicts[kind], lot = b.lot, cfg = mergeConfig(S.config).trade;
   const risk = kind === 'condor' ? (best && best.maxLoss) : (best && -best.loss3);
   const kpis = best ? `<div class="kpis">${kpi('Credit', pts(best.credit) + ' pts', rup(best.credit * lot) + ' per lot')}${kpi('Expected profit', pts(best.ev) + ' pts', rup(best.ev * lot) + ' per lot, after costs')}
     ${kpi('Chance of profit', pct(best.pop), 'Settles between ' + best.breakevens.map(fmt).join(' and '))}
     ${kpi(kind === 'condor' ? 'Maximum loss' : 'Loss on a 3<span class="nc">σ</span> move', rup(-(kind === 'condor' ? best.maxLoss : -best.loss3) * lot), kind === 'condor' ? 'Capped by the wings' : '<span class="dn">Not capped beyond this</span>')}
-    ${kpi('Loss on a 2<span class="nc">σ</span> move', rup(best.loss2 * lot), '±' + fmt(2 * b.sd) + ' points')}
+    ${kpi('Loss on a 2<span class="nc">σ</span> move', rup(best.loss2 * lot), '±' + fmt(2 * (b.stressSd || b.sd)) + ' points (implied σ)')}
     ${kpi('Edge score', best.score == null ? '—' : (best.score * 100).toFixed(1) + '%', `Needs ${Math.round((kind === 'condor' ? cfg.condorMin : cfg.strangleMin) * 100)}% of ${kind === 'condor' ? 'max loss' : '3σ loss'}`)}</div>` : '';
   const legs = best ? `<div class="tw"><table><thead><tr><th>Leg</th><th class="r">Strike</th><th>Type</th><th class="r">Price</th></tr></thead><tbody>${[...best.legs].sort((a, c) => a.strike - c.strike).map(l => `<tr><td>${l.side > 0 ? '<span class="pill p-info">Buy</span>' : '<span class="pill p-warn">Sell</span>'}</td><td class="r">${fmt(l.strike)}</td><td>${l.type}</td><td class="r">${l.price.toFixed(2)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="note">No liquid strikes for this structure.</p>';
   const all = b[kind].all || [];
   return sel + `<section class="card" style="margin-top:12px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline"><h3>${name}: ${esc(u.label)} ${esc(KIND[p.kind])} · ${dlabel(p.expiry)}</h3>${vpill(v.verdict)}</div>
     <div class="sub">${esc(v.reason.charAt(0).toUpperCase() + v.reason.slice(1))}.</div>
-    <p class="note" style="margin:0">Forward ${fmt(b.F)} · 1σ to expiry ±${fmt(b.sd)} (fair) · ${edgeText(b)} · costs ${b.costPts.toFixed(1)} pts a leg · lot ${lot}${b.fair.note ? ' · ' + esc(b.fair.note) : ''}</p></section>
+    <p class="note" style="margin:0">Forward ${fmt(b.F)} · 1σ to expiry ±${fmt(b.sd)} fair, ±${fmt(b.stressSd || b.sd)} implied (losses use the wider) · ${b.tdays != null ? b.tdays.toFixed(1) + ' trading sessions left · ' : ''} ${edgeText(b)} · costs ${b.costPts.toFixed(1)} pts a leg · lot ${lot}${b.fair.note ? ' · ' + esc(b.fair.note) : ''}</p></section>
     ${kpis}
     <div class="grid" style="margin-top:14px"><div class="card s4"><h3>Best strikes</h3><div class="sub">${best ? `Shorts near the ${Math.round(best.p * 100)}/${Math.round((1 - best.p) * 100)} settlement quantiles · ${pct(best.inside)} chance of settling between them` : ''}</div>${legs}</div>
       <div class="card s8"><h3>Profit or loss at expiry, per lot</h3><div class="sub">After costs. Dashed line = spot.</div>${best ? '<div class="chart-box"><canvas id="payChart" role="img" aria-label="Payoff at expiry"></canvas></div>' : ''}</div></div>
@@ -1054,7 +1096,7 @@ function paperView() {
   return out.join('');
 }
 function tradeLine(p) {
-  const t = p.bands && p.bands.today; if (!t) return '';
+  const b = bandState(p, ist()), t = b && b.today; if (!t) return '';
   return `<div class="card tradeline">${vpill(t.verdict)} <span>Trade view for this expiry: ${esc(t.reason)}.</span> <button class="linkbtn" data-goto="today">Today tab →</button></div>`;
 }
 // ---------- analyst overlay, track record, post-mortems, proposals
@@ -1173,8 +1215,9 @@ function methodView() {
   <h3>Self-correction</h3>
   <p>After each expiry the 09:40 run scores every locked call three ways: the model alone, the model with the analyst's overlay, and the plain futures price. It names the type of miss (event shock, trend breakout through an open-interest wall, a bigger or smaller move than implied volatility priced) and writes a post-mortem. Signal weights then move toward what worked, at most 1/11th per expiry. When a mistake repeats over the last 8 expiries, it proposes a structural change, which waits for your approval on the Proposals tab.</p>
   <h3>Trade bands (Today, Iron condor, Short strangle, Range view)</h3>
-  <p>Selling a range only pays if options are priced above the movement the index really delivers. Fair volatility blends realised volatility over 10, 20 and 60 days (half, 30% and 20%), is never taken below 80% of implied volatility, is raised 15% in a strong trend, and is set equal to implied volatility when a high-impact event falls before expiry (so no edge is assumed). The settlement distribution is the market's own, read from the option smile so put skew and fat tails are kept, centred on the futures-implied forward and narrowed by the gap between implied and fair volatility.</p>
-  <p>Short strikes are tried at the 10/90 to 30/70 quantiles (never nearer the money, where an expiry-only view understates day-to-day risk); condor wings sit about half a standard deviation further out. Each candidate's expected profit is computed after costs (slippage of 1 point a leg on Nifty and 3 on Bank Nifty, plus ₹60 a leg per lot). The verdict is NO TRADE in a strong trend, before a high-impact event, when expected profit is negative or when it is below 4% of the condor's maximum loss or 3% of the strangle's 3σ loss. Otherwise it is PAPER-TRADE ONLY until 8 paper trades per index and structure have settled, and only then TRADE.</p>
+  <p>Selling a range only pays if options are priced above the movement the index really delivers. Fair volatility blends realised volatility over 10, 20 and 60 days (half, 30% and 20%), restated from trading sessions to calendar time so weekends do not create a false edge, is never taken below 80% of implied volatility, is raised 15% in a strong trend, and is set equal to implied volatility when a high-impact event falls before expiry or the history is too short. The settlement distribution is the market's own, read from the option smile so put skew and fat tails are kept, centred on the futures-implied forward and narrowed by the gap between implied and fair volatility.</p>
+  <p>Short strikes are tried at the 10/90 to 20/80 quantiles (never nearer the money, where an expiry-only view understates day-to-day risk); condor wings sit about half a standard deviation further out. Expected profit counts only the volatility edge (the model's own pricing error against the quotes is removed) and is after costs: slippage of 1 point a leg on Nifty and 3 on Bank Nifty, plus ₹60 a leg per lot. Tail losses use the wider of fair and implied σ.</p>
+  <p>The verdict is NO TRADE in a strong trend, when a high-impact (or unconfirmed medium) event falls before expiry, on expiry day, when prices are stale, when expected profit is negative, or when it is below 4% of the condor's maximum loss or 3% of the strangle's 3σ loss. Otherwise it is PAPER-TRADE ONLY until 8 expiries per index and structure have settled on paper with a profit of at least half what the model expected, and only then TRADE.</p>
   <h3>Data</h3>
   <p>Live numbers on this page come from your Kite connector in claude.ai, read-only. The Kite connection lasts about a week; when it lapses the page and the analyst say so. Reconnect Kite in claude.ai Settings → Connectors and press Refresh.</p></div>`;
 }

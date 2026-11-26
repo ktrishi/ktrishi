@@ -145,7 +145,7 @@ test('settle scores paper trades before writing the outcome', () => {
   const d = tmp(), eng = loadEngine(HTML), ch = wideChain(eng);
   const { buildLock, buildTrade, DEFAULT_CONFIG } = require('../engine');
   const lock = buildLock({ chain: ch, nowMs: ch.takenMs, cfg: DEFAULT_CONFIG, overlay: {}, events: [], slot: '09:40' });
-  const trade = buildTrade({ chain: ch, lock, history: { NIFTY: history('2026-11-18') }, events: [], cfg: DEFAULT_CONFIG, paperN: 0 });
+  const trade = buildTrade({ chain: ch, lock, history: { NIFTY: history('2026-11-18') }, events: [], cfg: DEFAULT_CONFIG, paper: null });
   fs.writeFileSync(path.join(d, 'state.json'), JSON.stringify({ locks: [lock], trades: [trade], outcomes: {}, scores: [], proposals: [], config: DEFAULT_CONFIG, versions: {} }));
   fs.writeFileSync(path.join(d, 'candles.json'), JSON.stringify({ NIFTY: [{ date: '2026-11-23', close: 25210 }] }));
   execFileSync('node', [RUN, 'settle', '--state', path.join(d, 'state.json'), '--candles', path.join(d, 'candles.json'), '--now', String(Date.UTC(2026, 10, 24, 4, 10)), '--out', d]);
@@ -158,11 +158,7 @@ test('settle scores paper trades before writing the outcome', () => {
   assert.ok(Math.abs(ts.data.strangle.pts - pts) < 1e-9);
   assert.ok(Math.abs(ts.data.strangle.rupees - pts * trade.lot) < 1e-6);
   assert.equal(ts.data.strangle.taken, trade.verdicts.strangle.verdict !== 'NO TRADE');
+  assert.ok(Math.abs(ts.data.strangle.evRupees - trade.strangle.ev * trade.lot) < 1e-6);
 });
 
-test('paper counts come from settled trades the verdict did not reject', () => {
-  const { paperCounts } = require('../learn');
-  const s = [{ idx: 'NIFTY', condor: { taken: true }, strangle: { taken: false } }, { idx: 'NIFTY', condor: { taken: true }, strangle: { taken: true } }, { idx: 'BANKNIFTY', condor: { taken: true }, strangle: null }];
-  assert.deepEqual(paperCounts(s, 'NIFTY'), { condor: 2, strangle: 1 });
-  assert.deepEqual(paperCounts(s, 'BANKNIFTY'), { condor: 1, strangle: 0 });
-});
+

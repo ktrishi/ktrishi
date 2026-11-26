@@ -7,7 +7,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadEngine, buildLock, buildTrade, DEFAULT_CONFIG } = require('./engine');
-const { scoreLock, postmortem, settleDue, proposals, applyApproved, settleTrade, paperCounts } = require('./learn');
+const { scoreLock, postmortem, settleDue, proposals, applyApproved, settleTrade, paperRecord } = require('./learn');
 
 const HTML = path.join(__dirname, '..', 'artifact', 'fo_expiry_desk.html');
 const arg = n => { const i = process.argv.indexOf('--' + n); return i > 0 ? process.argv[i + 1] : undefined; };
@@ -65,7 +65,7 @@ function lockCmd() {
     input.chains.forEach((chain, i) => {
       const k = `${chain.idx}|${chain.expiry}`;
       if (done.has(k)) return; done.add(k);
-      const t = buildTrade({ chain, lock: made[i], history, events: input.events, cfg, paperN: paperCounts(state.tradescores, chain.idx), htmlPath: HTML });
+      const t = buildTrade({ chain, lock: made[i], history, events: input.events, cfg, paper: paperRecord(state.tradescores, chain.idx), htmlPath: HTML });
       if (!EXISTING.has('trades/' + t.id)) { trades.push(t); writes.push(w('trades', t.id, t, versions)); }
       console.log(`TRADE ${t.id}: ${t.today.verdict} (${t.today.structure || '-'}) - ${t.today.reason}${t.historyUsed === false ? ' [no fresh price history]' : ''}`);
     });

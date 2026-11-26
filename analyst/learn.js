@@ -148,12 +148,12 @@ function settleTrade(t, settle) {
   const one = s => {
     const b = t[s]; if (!b) return null;
     const pts = b.legs.reduce((a, l) => a + l.side * (intr(l, settle) - l.price), 0) - (t.costPts || 0) * b.legs.length;
-    return { pts, rupees: pts * (t.lot || 1), win: pts > 0, taken: !!(t.verdicts && t.verdicts[s] && t.verdicts[s].verdict !== 'NO TRADE'), ev: b.ev, credit: b.credit };
+    return { pts, rupees: pts * (t.lot || 1), evRupees: (b.ev || 0) * (t.lot || 1), win: pts > 0, taken: !!(t.verdicts && t.verdicts[s] && t.verdicts[s].verdict !== 'NO TRADE'), ev: b.ev, credit: b.credit };
   };
   return { id: t.id, idx: t.idx, kind: t.kind, key: t.key, expiry: t.expiry, date: t.date, settlement: settle, verdict: t.today && t.today.verdict,
     condor: one('condor'), strangle: one('strangle') };
 }
 // Same count the page uses: shared from the engine block.
-const paperCounts = (scores, idx) => ENG().paperCounts(scores, idx);
+const paperRecord = (scores, idx) => ENG().paperRecord(scores, idx);
 
-module.exports = { classifyMiss, scoreLock, postmortem, settleDue, proposals, applyApproved, settleTrade, paperCounts, LESSON };
+module.exports = { classifyMiss, scoreLock, postmortem, settleDue, proposals, applyApproved, settleTrade, paperRecord, LESSON };
