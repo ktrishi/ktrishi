@@ -112,8 +112,13 @@ button.lad-row:hover { background: var(--surface2); }
 .lad-bar .le { position: absolute; transform: translateX(-50%); font-size: 10.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .lad-bar .le90 { top: -19px; color: var(--muted); } .lad-bar .le68 { top: 19px; color: var(--accent); font-weight: 600; }
 .lad-axis { position: relative; height: 16px; }
+/* one spot line through every expiry row: the bar column starts after 8px padding + 170px label + 14px gap and is 364px narrower than the row */
+.lad-wrap { position: relative; margin-bottom: 20px; }
+.lad-spotline { position: absolute; top: 16px; bottom: 0; left: calc(192px + (100% - 364px) * var(--p) / 100); border-left: 2px dashed var(--muted); pointer-events: none; z-index: 1; }
+.lad-spotlab { position: absolute; bottom: -19px; left: calc(192px + (100% - 364px) * var(--p) / 100); transform: translateX(-50%); font-size: 11px; font-weight: 600; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lad-bar .lspot { display: none; } .lad-bar .lexp { z-index: 2; }
 .lad-axis span { position: absolute; transform: translateX(-50%); font-size: 10.5px; color: var(--muted); white-space: nowrap; }
-@media (max-width: 620px) { .lad-row { grid-template-columns: minmax(0, 1fr) auto; } .lad-bar, .lad-axis { grid-column: 1 / -1; order: 3; } .lad-row.axis > span:not(.lad-axis) { display: none; } }
+@media (max-width: 620px) { .lad-spotline, .lad-spotlab { display: none; } .lad-bar .lspot { display: block; } .lad-wrap { margin-bottom: 0; } .lad-row { grid-template-columns: minmax(0, 1fr) auto; } .lad-bar, .lad-axis { grid-column: 1 / -1; order: 3; } .lad-row.axis > span:not(.lad-axis) { display: none; } }
 .drift-lab { margin-top: 6px; font-size: 12px; color: var(--hero-muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .drift-lab i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--drift); }
 .xchips { display: flex; gap: 6px 8px; flex-wrap: wrap; margin-top: 4px; }
@@ -855,7 +860,7 @@ function ladderView(u, now, selKey) {
   const spot = rows[0].p.spot;
   return `<section class="card ladder"><h3>${u.label}: every expiry on one scale</h3>
     <div class="sub">Black mark = expected settlement. Gold band = 68% range (gold numbers below each bar); faint band = 90% range (grey numbers above). Dashed line = spot ${fmt(spot)}. Click a row to see that expiry in detail below.</div>
-    <div class="lad-row axis"><span></span><span class="lad-axis">${ticks.map(t => `<span style="left:${pos(t)}%">${fmt(t)}</span>`).join('')}</span><span></span></div>
+    <div class="lad-wrap"><div class="lad-row axis"><span></span><span class="lad-axis">${ticks.map(t => `<span style="left:${pos(t)}%">${fmt(t)}</span>`).join('')}</span><span></span></div>
     ${rows.map(({ p, pr }) => { const d = tradingDaysLeft(now.date, p.expiry); return `<button type="button" class="lad-row${p.key === selKey ? ' on' : ''}" data-key="${p.key}" aria-pressed="${p.key === selKey}">
       <span class="lad-lab"><b>${dlabel(p.expiry)}</b><small>${KIND[p.kind]} · ${d === 0 ? 'expires today' : d + ' trading day' + (d === 1 ? '' : 's')}</small></span>
       <span class="lad-bar${pr.band90 ? ' lab' : ''}">${pr.band90 ? `<i class="l90" style="left:${pos(pr.band90[0])}%;width:${pos(pr.band90[1]) - pos(pr.band90[0])}%"></i><i class="l68" style="left:${pos(pr.band68[0])}%;width:${pos(pr.band68[1]) - pos(pr.band68[0])}%"></i>
@@ -863,6 +868,7 @@ function ladderView(u, now, selKey) {
         <span class="le le68" style="left:${clamp(pos(pr.band68[0]), 4, 96)}%">${fmt(pr.band68[0])}</span><span class="le le68" style="left:${clamp(pos(pr.band68[1]), 4, 96)}%">${fmt(pr.band68[1])}</span>` : ''}
         <i class="lspot" style="left:${pos(spot)}%"></i><i class="lexp" style="left:${pos(pr.centre)}%" title="Expected ${fmt(pr.centre)}"></i></span>
       <span class="lad-val"><b>${fmt(pr.centre)}</b><small>${pr.band68 ? `68% ${fmt(pr.band68[0])}–${fmt(pr.band68[1])}` : 'no range'}</small></span></button>`; }).join('')}
+    <i class="lad-spotline" style="--p:${pos(spot)}" aria-hidden="true"></i><span class="lad-spotlab" style="--p:${pos(spot)}">Spot ${fmt(spot)}</span></div>
   </section>`;
 }
 function panelView(p, now) {
