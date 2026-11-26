@@ -128,6 +128,7 @@ button.lad-row:hover { background: var(--surface2); }
 .ticker .tk { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; }
 .ticker .tk span { color: var(--band-muted); font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; }
 .ticker .tk b { font: 600 17px/1.1 var(--serif); color: var(--band-ink); }
+.ticker .tk.stale b { color: #f2b35b; }
 .ticker .up { color: var(--hero-pos); } .ticker .dn { color: var(--hero-neg); }
 .card .up, .kpi .up { color: var(--good); } .card .dn, .card .down { color: var(--bad); }
 .rangebar { position: relative; height: 34px; margin-top: 18px; }
@@ -621,8 +622,10 @@ function paperRecord(tradeScores, idx) {
 const S = { mcp: null, db: null, indices: {}, panels: {}, locks: {}, outcomes: {}, weights: {}, hist: {}, trades: [], tradescores: [], tab: 'today', tbSel: null, sel: {}, oiMode: {}, charts: {}, busy: false, err: null, dataMs: null };
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Every Kite call gives up after 25 s, so one stuck request can never freeze the page's refresh cycle.
 async function kite(args) {
-  const r = await S.mcp.callTool('Kite', 'market', args, { cache: false });
+  let to; const timeout = new Promise((_, rej) => { to = setTimeout(() => rej({ code: 'server_unavailable', message: 'Kite did not answer within 25 seconds' }), 25e3); });
+  const r = await Promise.race([S.mcp.callTool('Kite', 'market', args, { cache: false }), timeout]).finally(() => clearTimeout(to));
   const p = r && (r.payload ?? r);
   return p && p.data !== undefined ? p.data : p;
 }
@@ -829,12 +832,14 @@ function renderTicker() {
   $('#ticker').innerHTML = UNDERLYINGS.map(u => { const t = S.indices[u.name] || (S.panels[u.name + '-monthly'] ? { spot: S.panels[u.name + '-monthly'].spot } : null); if (!t) return ''; const ch = t.prevClose ? (t.spot / t.prevClose - 1) * 100 : null;
     return `<span class="tk"><span>${u.label}</span><b>${fmt(t.spot)}</b>${ch == null ? '' : `<em class="${ch >= 0 ? 'up' : 'dn'}" style="font-style:normal">${ch >= 0 ? '▲' : '▼'} ${Math.abs(ch).toFixed(2)}%</em>`}</span>`; }).join('')
     + (() => { const v = (S.indices.NIFTY || {}).vix; return v ? `<span class="tk"><span>India VIX</span><b>${v.toFixed(2)}</b></span>` : ''; })()
-    + (S.spotMs ? `<span class="tk"><span>Spot at</span><b style="font-size:13px">${tlabel(S.spotMs)}</b></span>` : '');
+    + (S.spotMs ? (() => { const n = ist(), mkt = n.dow > 0 && n.dow < 6 && n.hm >= '09:15' && n.hm <= '15:30', old = mkt && Date.now() - S.spotMs > 3 * 60e3;
+      return `<span class="tk${old || S.spotErr ? ' stale' : ''}" title="${esc(S.spotErr ? 'Last spot update failed: ' + S.spotErr : old ? 'Spot is more than 3 minutes old' : 'Exchange time of the last spot price')}"><span>Spot at</span><b style="font-size:13px">${tlabel(S.spotMs)}${S.spotErr || old ? ' ⚠' : ''}</b></span>`; })() : '');
 }
 // Spot prices only (Nifty, Bank Nifty, India VIX): one small quote call every 5 minutes in market hours, separate from
 // the option-chain refresh, so the ticker keeps moving even if a chain fetch fails.
 async function refreshSpots() {
-  if (!S.mcp) return;
+  if (!S.mcp || S.spotBusy) return;
+  S.spotBusy = true;
   try {
     const q = await kite({ mode: 'quote', instruments: [...UNDERLYINGS.map(u => u.spot), VIX] });
     for (const u of UNDERLYINGS) {
@@ -843,8 +848,10 @@ async function refreshSpots() {
       S.indices[u.name] = { ...t, label: u.label, spot: +r.last_price, prevClose: r.ohlc && +r.ohlc.close || t.prevClose || null, ms: Date.now() };
     }
     const v = q && q[VIX]; if (v && +v.last_price > 0 && S.indices.NIFTY) S.indices.NIFTY.vix = +v.last_price;
-    S.spotMs = Date.now(); renderTicker();
-  } catch (e) { /* the full refresh reports Kite problems; the ticker just keeps its last value */ }
+    const ts = q && q[UNDERLYINGS[0].spot] && Date.parse(q[UNDERLYINGS[0].spot].timestamp);
+    S.spotMs = Number.isFinite(ts) ? ts : Date.now(); S.spotErr = null;
+  } catch (e) { S.spotErr = (e && (e.message || e.code)) || 'Kite error'; }
+  finally { S.spotBusy = false; renderTicker(); }
 }
 function tradingDaysLeft(today, expiry) { let n = 0; const d = new Date(today + 'T00:00:00Z'), e = new Date(expiry + 'T00:00:00Z'); while (d < e) { d.setUTCDate(d.getUTCDate() + 1); const w = d.getUTCDay(); if (w > 0 && w < 6) n++; } return n; }
 // Every expiry of one index on a common level scale, so the term structure of the forecast is visible at a glance.
@@ -1263,10 +1270,18 @@ render();
   S.mcp = mcp; S.db = db;
   if (db) { await loadStore(); render(); }
   if (!mcp) { setStatus('Kite unavailable', 'alert'); $('#banner').innerHTML = '<div class="banner bad">Live Kite data is not available in this view. Open the artifact in claude.ai while signed in as its owner.</div>'; return; }
-  await refresh();
+  // Timers start before the first refresh, so a slow first load cannot hold them back.
   const open = () => { const n = ist(); return n.dow > 0 && n.dow < 6 && n.hm >= '09:15' && n.hm <= '15:35' && !document.hidden; };
-  setInterval(() => { if (open()) refresh(); }, 5 * 60e3);
-  // spots on their own 5-minute clock, offset by 2.5 minutes, so the ticker moves about every 2–3 minutes in all
-  setTimeout(() => { if (open()) refreshSpots(); setInterval(() => { if (open()) refreshSpots(); }, 5 * 60e3); }, 150e3);
+  setInterval(() => { if (open()) refresh(); }, 5 * 60e3);            // option chains, ranges and trade bands
+  setInterval(() => { if (open()) refreshSpots(); }, 60e3);           // spot prices only: one small call a minute
+  setInterval(() => renderTicker(), 30e3);                             // keeps the stale warning honest
+  // Background tabs skip updates; on coming back, catch up at once instead of waiting for the next tick.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || !open()) return;
+    if (!S.spotMs || Date.now() - S.spotMs > 60e3) refreshSpots();
+    if (!S.dataMs || Date.now() - S.dataMs > 5 * 60e3) refresh();
+  });
+  refreshSpots();   // ticker first: one small call, shows within seconds even if the chains are slow
+  refresh();
 })();
 </script>
