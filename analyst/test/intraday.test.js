@@ -121,3 +121,20 @@ test('trend score: the live price decides VWAP and range position; the build-up 
   const b = t.parts.find(p => /last hour/.test(p.why));
   assert.equal(b.v, -1); assert.match(b.why, /short build-up/, 'not the single long build-up bar');
 });
+
+test('option OI shift since the open: per-strike change, top writing strikes and the tilt', () => {
+  const open = { strikes: [25800, 25900, 26000, 26100, 26200], ce: [100, 200, 500, 400, 300], pe: [600, 500, 300, 100, 50] };
+  const now = { strikes: [25800, 25900, 26000, 26100, 26200], ce: [100, 260, 1500, 1300, 500], pe: [700, 600, 320, 90, 50] };
+  const s = eng.oiShift(open, now, 25950);
+  assert.deepEqual(s.ceChg, [0, 60, 1000, 900, 200]); assert.deepEqual(s.peChg, [100, 100, 20, -10, 0]);
+  assert.equal(s.ceAdd, 2160); assert.equal(s.peAdd, 210);
+  assert.deepEqual(s.callWalls, [26000, 26100], 'biggest call additions above spot');
+  assert.deepEqual(s.putWalls, [25800, 25900], 'biggest put additions below spot');
+  assert.equal(s.tilt, 'bearish'); assert.match(s.text, /call writing dominant/i);
+  const mirror = eng.oiShift({ ...open, ce: open.pe, pe: open.ce }, { ...now, ce: now.pe, pe: now.ce }, 25950);
+  assert.equal(mirror.tilt, 'bullish');
+  assert.equal(eng.oiShift(open, open, 25950).tilt, 'balanced');
+  assert.equal(eng.oiShift(null, now, 25950), null);
+  const shifted = eng.oiShift({ strikes: [25900, 26000], ce: [1, 1], pe: [1, 1] }, { strikes: [26000, 26100], ce: [5, 9], pe: [5, 9] }, 26000);
+  assert.deepEqual(shifted.strikes, [26000], 'only strikes present at both times');
+});

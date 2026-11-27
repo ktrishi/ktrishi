@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const EXPORTS = ['UNDERLYINGS', 'PRIOR', 'PRIOR_K', 'SIGNALS', 'ist', 'closeMs', 'yearFrac', 'isLive', 'dteBucket', 'ncdf', 'b76',
   'impliedVol', 'computeSignals', 'predict', 'fmt', 'compare', 'scoreLocks', 'refit', 'trackRecord', 'percentile', 'clamp', 'applyConfig', 'mergeConfig', 'DEFAULT_CONFIG',
   'realizedVol', 'trendRegime', 'fairVol', 'fitSmile', 'impliedDist', 'gridCdf', 'gridQuantile', 'evalLegs', 'bandFinder', 'tradeVerdict', 'rangeView', 'tradeBands', 'eventBefore', 'closesFor', 'paperRecord', 'eventRisk', 'tradingDaysFrac',
-  'buildupOf', 'vwapOf', 'pivots', 'openingRange', 'trendScore', 'trendTracker', 'reversalWatch', 'signalCheck', 'scoreSignal', 'tomorrowBias', 'parseOptionSymbol', 'positionRisk', 'BUILDUP'];
+  'buildupOf', 'vwapOf', 'pivots', 'openingRange', 'trendScore', 'trendTracker', 'reversalWatch', 'signalCheck', 'scoreSignal', 'tomorrowBias', 'parseOptionSymbol', 'positionRisk', 'BUILDUP', 'oiShift'];
 
 const DEFAULT_HTML = require('node:path').join(__dirname, '..', 'artifact', 'fo_expiry_desk.html');
 

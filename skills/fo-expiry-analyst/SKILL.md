@@ -78,6 +78,7 @@ Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked
 - **Opportunity lines are unproven.** One appears only when the confirmed trend and a fresh break of the opening range or the previous day's high/low agree, with matching build-up and the right side of VWAP. It fires 09:30–14:45, at most once per index per hour, and is scored on paper at +30 and +60 minutes.
   - When asked about one, quote the running hit rate.
   - Never present a signal as a recommendation.
+- **Option open interest since 09:30:** the first check after 09:30 saves the ±3% chain of the nearest contract as a baseline in `diary.open.oi`. `oiShift` then gives the per-strike call and put change, the strikes with the heaviest writing above and below spot, and a tilt: put writing dominant is bullish, call writing dominant is bearish, otherwise balanced (threshold ±0.2 on (ΔPE − ΔCE)/(|ΔPE| + |ΔCE|)). Two charts show it: change by strike, and the total change through the day with the put/call ratio.
 - **Rishi's positions** come from Kite `portfolio` (`mode: "positions"`, net view), shown live with each strike's distance from spot. A **breach** is a short strike within 0.5% of spot or beyond it. Positions are never stored.
 
 ## Trade bands (Today, Iron condor, Short strangle, Range view tabs)

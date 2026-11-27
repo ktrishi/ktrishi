@@ -758,6 +758,23 @@ function positionRisk(rows, spots) {
   }
   return { rows: out, pnl: out.reduce((a, x) => a + x.pnl, 0), breaches: out.filter(x => x.breach).length };
 }
+// Option open-interest change between two chains (the 09:30 baseline and now): who is writing, where, and the tilt.
+const fmtQ = x => { const a = Math.abs(x), sg = x < 0 ? '−' : '+'; return sg + (a >= 1e6 ? (a / 1e6).toFixed(2) + 'M' : a >= 1e3 ? Math.round(a / 1e3) + 'K' : String(Math.round(a))); };
+function oiShift(open, now, spot) {
+  if (!open || !now || !open.strikes || !now.strikes) return null;
+  const o = new Map(open.strikes.map((k, i) => [k, i])), strikes = [], ceChg = [], peChg = [];
+  now.strikes.forEach((k, i) => { if (!o.has(k)) return; const j = o.get(k); strikes.push(k); ceChg.push((now.ce[i] || 0) - (open.ce[j] || 0)); peChg.push((now.pe[i] || 0) - (open.pe[j] || 0)); });
+  if (!strikes.length) return null;
+  const ceAdd = ceChg.reduce((a, b) => a + b, 0), peAdd = peChg.reduce((a, b) => a + b, 0);
+  const top = (chg, keep) => strikes.map((k, i) => [k, chg[i]]).filter(([k, v]) => keep(k) && v > 0).sort((a, b) => b[1] - a[1]).slice(0, 2).map(x => x[0]);
+  const callWalls = top(ceChg, k => k > spot), putWalls = top(peChg, k => k < spot);
+  const den = Math.abs(ceAdd) + Math.abs(peAdd), x = den ? (peAdd - ceAdd) / den : 0, tilt = x > 0.2 ? 'bullish' : x < -0.2 ? 'bearish' : 'balanced';
+  const both = `calls ${fmtQ(ceAdd)} vs puts ${fmtQ(peAdd)}`;
+  const text = tilt === 'bearish' ? `Call writing dominant (${both})${callWalls.length ? `; heaviest at ${callWalls.map(fmt).join(' / ')} above spot` : ''}: bearish tilt`
+    : tilt === 'bullish' ? `Put writing dominant (${both})${putWalls.length ? `; heaviest at ${putWalls.map(fmt).join(' / ')} below spot` : ''}: bullish tilt`
+    : `Call and put writing balanced (${both})`;
+  return { strikes, ceChg, peChg, ceAdd, peAdd, callWalls, putWalls, tilt, text };
+}
 /*ENGINE-END*/
 
 // ---------- connector + store
@@ -957,6 +974,15 @@ async function refreshIntraday(u, now, futQ) {
   const pcr = sg ? sg.pcrAtm : null, vix = (S.indices.NIFTY || {}).vix || null;
   let dirty = false;
   if (!dia.open && now.hm >= '09:30' && walls) { dia.open = { walls, pcr, vix, ms: Date.now() }; dirty = true; }
+  // option OI baseline: the whole ±3% chain of the nearest contract at the first check after 09:30 (or after an expiry roll)
+  const ch = panel && panel.oi && panel.oi.strikes && panel.oi.strikes.length ? { expiry: panel.expiry, strikes: panel.oi.strikes, ce: panel.oi.ce, pe: panel.oi.pe } : null;
+  if (ch && now.hm >= '09:30' && (!dia.open || !dia.open.oi || dia.open.oi.expiry !== ch.expiry)) { dia.open = { ...(dia.open || { walls, pcr, vix, ms: Date.now() }), oi: { ...ch, ms: Date.now() } }; dirty = true; }
+  it.chain = ch; it.shift = dia.open && dia.open.oi && ch && dia.open.oi.expiry === ch.expiry ? oiShift(dia.open.oi, ch, panel.spot) : null;
+  if (ch) {
+    const tot = { ms: Date.now(), ce: ch.ce.reduce((a, b) => a + b, 0), pe: ch.pe.reduce((a, b) => a + b, 0) };
+    it.optSeries = (it.optSeries || dia.snaps.filter(x => x.ceTot != null).map(x => ({ ms: x.ms, ce: x.ceTot, pe: x.peTot }))).filter(x => x.ms < tot.ms - 60e3).concat([tot]).slice(-90);
+    it.optTot = tot;
+  }
   const vwap = it.fut.vwap || vwapOf(c), or = openingRange(c), H = S.hist[u.name], prevHLC = H && H.prevHLC;
   const t = trendScore({ candles: c, vwap, walls, wallsOpen: dia.open && dia.open.walls, pcr, pcrOpen: dia.open && dia.open.pcr, vix, vixOpen: dia.open && dia.open.vix, price: it.fut.ltp });
   it.trend = t; it.vwap = vwap; it.or = or; it.walls = walls; it.pcr = pcr; it.prevHLC = prevHLC; it.ms = Date.now();
@@ -979,7 +1005,8 @@ async function refreshIntraday(u, now, futQ) {
   const slot = (() => { const [h, m] = now.hm.split(':').map(Number), mins = h * 60 + m - 555; return mins < 0 ? null : Math.floor(mins / 30); })();
   if (slot != null && now.hm <= '15:30' && !dia.snaps.some(x => x.slot === slot)) {
     dia.snaps.push({ slot, hm: now.hm, fut: it.fut.ltp, spot: panel ? panel.spot : null, vwap, oi: it.fut.oi, build: c.length > 1 ? buildupOf(c[c.length - 2], c[c.length - 1]) : 'neutral',
-      label: it.tracker.confirmed, score: t.score, support: walls && walls.support, resistance: walls && walls.resistance, pcr, vix });
+      label: it.tracker.confirmed, score: t.score, support: walls && walls.support, resistance: walls && walls.resistance, pcr, vix,
+      ms: Date.now(), ceTot: it.optTot ? it.optTot.ce : null, peTot: it.optTot ? it.optTot.pe : null });
     dia.snaps = dia.snaps.slice(-14); dirty = true;
   }
   if (!dia.bias && now.hm >= '15:25' && c.length >= 4) { dia.bias = tomorrowBias({ candles: c, vwap, pcrChange: dia.open && pcr != null && dia.open.pcr != null ? pcr - dia.open.pcr : null }); dirty = true; }
@@ -1024,6 +1051,16 @@ function signalStats() {
   const win = all.filter(s => !s.result.stopped && s.result.at60 > 0).length;
   return { n: all.length, win, pts: all.reduce((a, s) => a + (s.result.stopped ? -Math.abs(s.entry - s.stop) : s.result.at60), 0) };
 }
+function optionChangeBlock(u, it, dia) {
+  const base = dia && dia.open && dia.open.oi;
+  if (!it.chain) return '';
+  if (!base || !it.shift) return `<h4 style="margin:16px 0 6px">Option open interest: calls vs puts</h4><p class="note" style="margin:0">Starts from the first check after 09:30 with this page open: that chain becomes the baseline, and every later check shows where calls and puts were added or cut.</p>`;
+  const sh = it.shift, cls = sh.tilt === 'bearish' ? 'bad' : sh.tilt === 'bullish' ? 'info' : '';
+  return `<h4 style="margin:16px 0 6px">Option open interest since ${tlabel(base.ms)} <small class="mut">${esc(u.label)} ${dlabel(base.expiry)} expiry, strikes within ±3%</small></h4>
+    <div class="banner ${cls}" style="margin:0 0 10px">${esc(sh.text)}.${sh.putWalls.length && sh.tilt !== 'bullish' ? ` Put writing below spot at ${sh.putWalls.map(fmt).join(' / ')}.` : ''}${sh.callWalls.length && sh.tilt !== 'bearish' ? ` Call writing above spot at ${sh.callWalls.map(fmt).join(' / ')}.` : ''}</div>
+    <div class="grid"><div class="s7"><div class="sub" style="margin:0 0 4px">Change by strike: bars up = added, down = cut. Dashed line = spot.</div><div class="chart-box"><canvas id="ioi-${u.name}" role="img" aria-label="${esc(u.label)} change in call and put open interest by strike since ${tlabel(base.ms)}"></canvas></div></div>
+      <div class="s5"><div class="sub" style="margin:0 0 4px">Total change through the day, and the put/call ratio</div><div class="chart-box"><canvas id="ipcr-${u.name}" role="img" aria-label="${esc(u.label)} total call and put open interest change and put/call ratio through the day"></canvas></div></div></div>`;
+}
 function intradayView() {
   const now = ist(), st = signalStats();
   const cards = UNDERLYINGS.map(u => {
@@ -1040,6 +1077,7 @@ function intradayView() {
       <ul class="why">${it.trend.parts.map(p => `<li><span class="${p.v > 0 ? 'up' : p.v < 0 ? 'dn' : 'mut'}">${p.v > 0 ? '▲' : p.v < 0 ? '▼' : '•'}</span> ${esc(p.why)}</li>`).join('')}</ul>
       <div class="strip">${strip || '<span class="mut">Build-up appears after the second 15-minute bar.</span>'}</div>
       <div class="grid" style="margin-top:12px"><div class="s5">${intraLevels(it, it.fut.ltp)}</div><div class="s7"><div class="chart-box"><canvas id="intra-${u.name}" role="img" aria-label="${esc(u.label)} futures price, VWAP and open interest today"></canvas></div></div></div>
+      ${optionChangeBlock(u, it, dia)}
       <h4 style="margin:14px 0 6px">Opportunity lines <small class="mut">unproven: paper-traded and scored</small></h4>
       ${sigs.length ? `<div class="tw"><table><thead><tr><th>Time</th><th>Side</th><th class="r">Entry</th><th class="r">Invalid at</th><th class="r">Target</th><th>Why</th><th class="r">+30m</th><th class="r">+60m</th></tr></thead><tbody>${sigs.map(s => { const r = s.result || {}, f = x => x == null ? '…' : `<span class="${x >= 0 ? 'up' : 'dn'}">${x >= 0 ? '+' : ''}${x.toFixed(0)}</span>`;
         return `<tr><td>${tlabel(s.ms)}</td><td><span class="pill ${s.side === 'long' ? 'p-good' : 'p-bad'}">${s.side}</span></td><td class="r">${fmt(s.entry)}</td><td class="r">${fmt(s.stop)}</td><td class="r">${fmt(s.target)}</td><td>${esc(s.why)}</td><td class="r">${f(r.at30)}</td><td class="r">${f(r.at60)}${r.stopped ? ' <small class="dn">stopped</small>' : ''}</td></tr>`; }).join('')}</tbody></table></div>`
@@ -1055,8 +1093,33 @@ function intradayView() {
 }
 function drawIntraday() {
   if (typeof Chart === 'undefined') return;
-  const tick = css('--muted'), grid = css('--line');
+  const tick = css('--muted'), grid = css('--line'), now = ist();
   for (const u of UNDERLYINGS) {
+    const it0 = S.intra[u.name], dia = S.diary[`${u.name}-${now.date}`], base = dia && dia.open && dia.open.oi;
+    const cv1 = document.getElementById('ioi-' + u.name);
+    if (cv1 && it0 && it0.shift) {
+      const sh = it0.shift, spot = (S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot;
+      const idx = sh.strikes.reduce((bi, k, i) => Math.abs(k - spot) < Math.abs(sh.strikes[bi] - spot) ? i : bi, 0);
+      const spotLine = { id: 'spotLine', afterDatasetsDraw(chart) { const x = chart.scales.x.getPixelForValue(idx), { top, bottom } = chart.chartArea, cx = chart.ctx; cx.save(); cx.strokeStyle = tick; cx.setLineDash([4, 4]); cx.beginPath(); cx.moveTo(x, top); cx.lineTo(x, bottom); cx.stroke(); cx.restore(); } };
+      S.charts['ioi' + u.name] = new Chart(cv1, { type: 'bar', plugins: [spotLine], data: { labels: sh.strikes.map(fmt), datasets: [
+        { label: 'Calls added / cut', data: sh.ceChg, backgroundColor: css('--ce'), borderRadius: 2, categoryPercentage: .8, barPercentage: .9 },
+        { label: 'Puts added / cut', data: sh.peChg, backgroundColor: css('--pe'), borderRadius: 2, categoryPercentage: .8, barPercentage: .9 }] },
+        options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { labels: { color: tick, boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { title: x => 'Strike ' + x[0].label, label: x => `${x.dataset.label.split(' ')[0]}: ${fmtQ(x.parsed.y)}` } } },
+          scales: { x: { grid: { display: false }, ticks: { color: tick, maxRotation: 0, autoSkipPadding: 8 } }, y: { grid: { color: grid }, border: { display: false }, ticks: { color: tick, callback: v => fmtQ(v) } } } } });
+    }
+    const cv2 = document.getElementById('ipcr-' + u.name);
+    if (cv2 && it0 && base && it0.optSeries && it0.optSeries.length) {
+      const c0 = base.ce.reduce((a, b) => a + b, 0), p0 = base.pe.reduce((a, b) => a + b, 0), ser = it0.optSeries.filter(x => x.ms >= base.ms - 60e3);
+      S.charts['ipcr' + u.name] = new Chart(cv2, { type: 'line', data: { labels: ser.map(x => tlabel(x.ms)), datasets: [
+        { label: 'Calls', data: ser.map(x => x.ce - c0), borderColor: css('--ce'), backgroundColor: css('--ce'), borderWidth: 2, pointRadius: 2, yAxisID: 'y' },
+        { label: 'Puts', data: ser.map(x => x.pe - p0), borderColor: css('--pe'), backgroundColor: css('--pe'), borderWidth: 2, pointRadius: 2, yAxisID: 'y' },
+        { label: 'Put/call ratio', data: ser.map(x => x.ce ? x.pe / x.ce : null), borderColor: css('--fwd'), borderDash: [5, 4], borderWidth: 2, pointRadius: 0, yAxisID: 'y2' }] },
+        options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { labels: { color: tick, boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { label: x => x.dataset.yAxisID === 'y2' ? `PCR ${x.parsed.y.toFixed(2)}` : `${x.dataset.label}: ${fmtQ(x.parsed.y)}` } } },
+          scales: { x: { grid: { display: false }, ticks: { color: tick, maxRotation: 0, autoSkipPadding: 10 } }, y: { grid: { color: grid }, border: { display: false }, ticks: { color: tick, callback: v => fmtQ(v) } },
+            y2: { position: 'right', grid: { display: false }, border: { display: false }, ticks: { color: tick, callback: v => (+v).toFixed(2) } } } } });
+    }
     const cv = document.getElementById('intra-' + u.name), it = S.intra[u.name]; if (!cv || !it || !it.candles || !it.candles.length) continue;
     const c = it.candles; let pv = 0, vv = 0; const vw = c.map(b => { pv += (b.high + b.low + b.close) / 3 * b.volume; vv += b.volume; return vv ? pv / vv : null; });
     S.charts['intra' + u.name] = new Chart(cv, { data: { labels: c.map(b => tlabel(b.ms)), datasets: [
