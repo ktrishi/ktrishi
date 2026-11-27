@@ -165,7 +165,7 @@ tr.hl td { background: var(--surface2); font-weight: 600; }
 .kb-t { background: var(--surface2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; }
 .kb-t .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; } .kb-t .v { font: 600 17px/1.3 var(--serif); margin-top: 2px; } .kb-t .v small { font: 400 11.5px var(--sans); }
 .kb-t .d { font-size: 12px; color: var(--muted); margin-top: 2px; } .kb-t .d .pill { text-transform: none; letter-spacing: 0; }
-.intra { margin-top: 14px; } .intra h3 small { font-weight: 400; font-size: 12px; }
+.intra { margin-top: 14px; } .chart-box.tall { height: 340px; } .intra h3 small { font-weight: 400; font-size: 12px; }
 .intra .why { margin: 8px 0; padding-left: 0; list-style: none; columns: 2 300px; font-size: 13px; } .intra .why li { margin: 2px 0; }
 .intra .strip { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; } .intra .strip .pill { text-transform: none; letter-spacing: 0; font-weight: 500; }
 .tdrow { display: grid; grid-template-columns: 230px 170px minmax(0, 1fr); gap: 6px 16px; padding: 11px 0; border-top: 1px solid var(--line); align-items: start; }
@@ -781,6 +781,30 @@ function oiShift(open, now, spot) {
     : `Call and put writing balanced (${both})`;
   return { strikes, ceChg, peChg, ceAdd, peAdd, callWalls, putWalls, tilt, text };
 }
+// Most active options near spot (by today's volume), each read from its price and OI change since the baseline.
+const OPT_VIEW = { CE: { buying: 'bullish', writing: 'bearish', 'short covering': 'bullish', unwinding: 'bearish', mixed: 'neutral' },
+  PE: { buying: 'bearish', writing: 'bullish', 'short covering': 'bearish', unwinding: 'bullish', mixed: 'neutral' } };
+function activeOptions(ch, base, spot, { band = 0.015, n = 3 } = {}) {
+  if (!ch || !ch.strikes || !ch.ceVol) return null;
+  const bi = base && base.strikes ? new Map(base.strikes.map((k, i) => [k, i])) : null, idx = [];
+  ch.strikes.forEach((k, i) => { if (Math.abs(k / spot - 1) <= band) idx.push(i); });
+  const one = (i, t) => {
+    const k = ch.strikes[i], vol = (t === 'CE' ? ch.ceVol : ch.peVol)[i] || 0, ltp = (t === 'CE' ? ch.ceLtp : ch.peLtp)[i] || 0, oi = (t === 'CE' ? ch.ce : ch.pe)[i] || 0;
+    let read = null, dLtpPct = null, dOi = null;
+    if (bi && bi.has(k) && base.ceLtp) {
+      const j = bi.get(k), l0 = (t === 'CE' ? base.ceLtp : base.peLtp)[j] || 0, o0 = (t === 'CE' ? base.ce : base.pe)[j] || 0;
+      dLtpPct = l0 > 0 ? (ltp / l0 - 1) * 100 : null; dOi = oi - o0;
+      const up = dLtpPct != null && dLtpPct >= 1, dn = dLtpPct != null && dLtpPct <= -1, oiUp = o0 > 0 && dOi / o0 >= 0.01, oiDn = o0 > 0 && dOi / o0 <= -0.01;
+      read = up && oiUp ? 'buying' : dn && oiUp ? 'writing' : up && oiDn ? 'short covering' : dn && oiDn ? 'unwinding' : 'mixed';
+    }
+    return { strike: k, type: t, vol, ltp, oi, dLtpPct, dOi, read, view: read ? OPT_VIEW[t][read] : null };
+  };
+  const top = t => idx.map(i => one(i, t)).sort((a, b) => b.vol - a.vol).slice(0, n);
+  const calls = top('CE'), puts = top('PE'), lead = [calls[0], puts[0]].filter(x => x && x.vol > 0);
+  const score = lead.reduce((a, x) => a + (x.view === 'bullish' ? 1 : x.view === 'bearish' ? -1 : 0), 0);
+  const text = lead.length ? `Most traded: ${lead.map(x => `${fmt(x.strike)} ${x.type}${x.read ? ` (${x.read}, ${x.view})` : ''}`).join(' and ')}${lead.some(x => x.read) ? `: ${score > 0 ? 'bullish' : score < 0 ? 'bearish' : 'mixed'} read` : ''}` : 'No option volume yet';
+  return { strikes: idx.map(i => ch.strikes[i]), ceVol: idx.map(i => ch.ceVol[i] || 0), peVol: idx.map(i => ch.peVol[i] || 0), calls, puts, text, view: score > 0 ? 'bullish' : score < 0 ? 'bearish' : 'mixed' };
+}
 /*ENGINE-END*/
 
 // ---------- connector + store
@@ -843,7 +867,7 @@ function weightSet(name, bucket) {
 // ---------- fetch one underlying's live chain(s)
 function parseQuote(q) {
   const b = q && q.depth && q.depth.buy && q.depth.buy[0] ? q.depth.buy[0].price : 0, a = q && q.depth && q.depth.sell && q.depth.sell[0] ? q.depth.sell[0].price : 0;
-  return { ltp: +(q && q.last_price) || 0, bid: b || null, ask: a || null, oi: +(q && q.oi) || 0, ts: q && q.timestamp };
+  return { ltp: +(q && q.last_price) || 0, bid: b || null, ask: a || null, oi: +(q && q.oi) || 0, volume: +(q && q.volume) || 0, ts: q && q.timestamp };
 }
 function candleRows(p) {
   const arr = (p && (p.candles || p.data || p)) || [];
@@ -925,7 +949,9 @@ async function refreshUnderlying(u, now) {
       key, underlying: u.name, label: u.label, kind, expiry: exp, futExpiry: futExp, dataMs: Date.now(), spotTs: spotTs ? String(spotTs) : null,
       spot, future: fut, vix, bucket, signals: { forward: sig.forward, maxPain: sig.maxPain, supports: sig.supports, resistances: sig.resistances, wallCentre: sig.wallCentre,
         pcrTotal: sig.pcrTotal, pcrAtm: sig.pcrAtm, atmIv: sig.atmIv, sigma: sig.sigma, gammaPin: sig.gammaPin, pivot: sig.pivot, momentum: sig.momentum, quality: sig.quality, centres: sig.centres },
-      pred, oi: { strikes, ce: strikes.map(k => ce[k] || 0), pe: strikes.map(k => pe[k] || 0), ceChg: strikes.map(k => sig.oiChange[k + '|CE'] ?? null), peChg: strikes.map(k => sig.oiChange[k + '|PE'] ?? null) },
+      pred, oi: { strikes, ce: strikes.map(k => ce[k] || 0), pe: strikes.map(k => pe[k] || 0),
+        ...(() => { const m = (t, f) => { const o = Object.fromEntries(sigSnap.options.filter(x => x.type === t).map(x => [x.strike, x[f] || 0])); return strikes.map(k => o[k] || 0); };
+          return { ceVol: m('CE', 'volume'), peVol: m('PE', 'volume'), ceLtp: m('CE', 'ltp'), peLtp: m('PE', 'ltp') }; })(), ceChg: strikes.map(k => sig.oiChange[k + '|CE'] ?? null), peChg: strikes.map(k => sig.oiChange[k + '|PE'] ?? null) },
       // keep the last close's OI so tomorrow can show the change since the previous close
       oiPrevClose: oiPrev, oiClose: now.hm >= '15:30' ? oiNow : (prevPanel && prevPanel.expiry === exp ? prevPanel.oiClose || null : null),
       oiCloseDate: now.hm >= '15:30' ? now.date : (prevPanel && prevPanel.expiry === exp ? prevPanel.oiCloseDate || null : null),
@@ -981,9 +1007,11 @@ async function refreshIntraday(u, now, futQ) {
   let dirty = false;
   if (!dia.open && now.hm >= '09:30' && walls) { dia.open = { walls, pcr, vix, ms: Date.now() }; dirty = true; }
   // option OI baseline: the whole ±3% chain of the nearest contract at the first check after 09:30 (or after an expiry roll)
-  const ch = panel && panel.oi && panel.oi.strikes && panel.oi.strikes.length ? { expiry: panel.expiry, strikes: panel.oi.strikes, ce: panel.oi.ce, pe: panel.oi.pe } : null;
+  const ch = panel && panel.oi && panel.oi.strikes && panel.oi.strikes.length ? { expiry: panel.expiry, strikes: panel.oi.strikes, ce: panel.oi.ce, pe: panel.oi.pe,
+    ceVol: panel.oi.ceVol, peVol: panel.oi.peVol, ceLtp: panel.oi.ceLtp, peLtp: panel.oi.peLtp } : null;
   if (ch && now.hm >= '09:30' && (!dia.open || !dia.open.oi || dia.open.oi.expiry !== ch.expiry)) { dia.open = { ...(dia.open || { walls, pcr, vix, ms: Date.now() }), oi: { ...ch, ms: Date.now() } }; dirty = true; }
   it.chain = ch; it.shift = dia.open && dia.open.oi && ch && dia.open.oi.expiry === ch.expiry ? oiShift(dia.open.oi, ch, panel.spot) : null;
+  it.active = ch && ch.ceVol ? activeOptions(ch, dia.open && dia.open.oi && dia.open.oi.expiry === ch.expiry ? dia.open.oi : null, panel.spot) : null;
   if (ch) {
     const tot = { ms: Date.now(), ce: ch.ce.reduce((a, b) => a + b, 0), pe: ch.pe.reduce((a, b) => a + b, 0) };
     it.optSeries = (it.optSeries || dia.snaps.filter(x => x.ceTot != null).map(x => ({ ms: x.ms, ce: x.ceTot, pe: x.peTot }))).filter(x => x.ms < tot.ms - 60e3).concat([tot]).slice(-90);
@@ -1057,6 +1085,19 @@ function signalStats() {
   const win = all.filter(s => !s.result.stopped && s.result.at60 > 0).length;
   return { n: all.length, win, pts: all.reduce((a, s) => a + (s.result.stopped ? -Math.abs(s.entry - s.stop) : s.result.at60), 0) };
 }
+function activeBlock(u, it) {
+  const a = it.active; if (!a || !a.strikes.length) return '';
+  const VC = { bullish: 'up', bearish: 'dn' };
+  const vq = v => v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? Math.round(v / 1e3) + 'K' : String(v);
+  const row = x => `<tr><td class="nw"><b>${fmt(x.strike)}</b> ${x.type}</td><td>${x.read ? `<span class="${VC[x.view] || 'mut'}">${esc(x.read)}</span>` : '<span class="mut">—</span>'}</td><td class="r nw">${x.ltp.toFixed(1)}${x.dLtpPct == null ? '' : ` <small class="${x.dLtpPct >= 0 ? 'up' : 'dn'}">${x.dLtpPct >= 0 ? '+' : ''}${x.dLtpPct.toFixed(0)}%</small>`}</td><td class="r">${vq(x.vol)}</td><td class="r">${x.dOi == null ? '—' : fmtQ(x.dOi)}</td></tr>`;
+  return `<h4 style="margin:16px 0 6px">Most active options near spot <small class="mut">today’s volume, strikes within ±1.5% of ${fmt((S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot)}</small></h4>
+    <div class="banner ${a.view === 'bearish' ? 'bad' : a.view === 'bullish' ? 'info' : ''}" style="margin:0 0 10px">${esc(a.text)}.</div>
+    <div class="grid"><div class="s6"><div class="sub" style="margin:0 0 4px"><span style="color:var(--pe);font-weight:600">◀ Puts traded</span> · strike · <span style="color:var(--ce);font-weight:600">Calls traded ▶</span>. Darker = top 3. ▶ marks spot.</div><div class="chart-box tall"><canvas id="iact-${u.name}" role="img" aria-label="${esc(u.label)} most traded calls and puts by strike near spot"></canvas></div></div>
+      <div class="s6"><div class="tw"><table><thead><tr><th>Option</th><th>Read</th><th class="r">Price (vs 09:30)</th><th class="r">Volume</th><th class="r">OI change</th></tr></thead><tbody>
+        <tr><td colspan="5" class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Top calls</td></tr>${a.calls.map(row).join('')}
+        <tr><td colspan="5" class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Top puts</td></tr>${a.puts.map(row).join('')}
+      </tbody></table></div><p class="note" style="margin:6px 0 0">Read: price and open interest both up = buying; price down with open interest up = writing; open interest falling = covering or unwinding. Calls bought or puts written lean bullish; calls written or puts bought lean bearish.</p></div></div>`;
+}
 function optionChangeBlock(u, it, dia) {
   const base = dia && dia.open && dia.open.oi;
   if (!it.chain) return '';
@@ -1117,6 +1158,7 @@ function intradayView() {
       <ul class="why">${it.trend.parts.map(p => `<li><span class="${p.v > 0 ? 'up' : p.v < 0 ? 'dn' : 'mut'}">${p.v > 0 ? '▲' : p.v < 0 ? '▼' : '•'}</span> ${esc(p.why)}</li>`).join('')}</ul>
       <div class="strip">${strip || '<span class="mut">Build-up appears after the second 15-minute bar.</span>'}</div>
       <div class="grid" style="margin-top:12px"><div class="s5">${intraLevels(it, it.fut.ltp)}</div><div class="s7"><div class="chart-box"><canvas id="intra-${u.name}" role="img" aria-label="${esc(u.label)} futures price, VWAP and open interest today"></canvas></div></div></div>
+      ${activeBlock(u, it)}
       ${optionChangeBlock(u, it, dia)}
       <h4 style="margin:14px 0 6px">Opportunity lines <small class="mut">unproven: paper-traded and scored</small></h4>
       ${sigs.length ? `<div class="tw"><table><thead><tr><th>Time</th><th>Side</th><th class="r">Entry</th><th class="r">Invalid at</th><th class="r">Target</th><th>Why</th><th class="r">+30m</th><th class="r">+60m</th></tr></thead><tbody>${sigs.map(s => { const r = s.result || {}, f = x => x == null ? '…' : `<span class="${x >= 0 ? 'up' : 'dn'}">${x >= 0 ? '+' : ''}${x.toFixed(0)}</span>`;
@@ -1148,6 +1190,19 @@ function drawIntraday() {
         options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
           plugins: { legend: { labels: { color: tick, boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { title: x => 'Strike ' + x[0].label, label: x => `${x.dataset.label.split(' ')[0]}: ${fmtQ(x.parsed.y)}` } } },
           scales: { x: { grid: { display: false }, ticks: { color: tick, maxRotation: 0, autoSkipPadding: 8 } }, y: { grid: { color: grid }, border: { display: false }, ticks: { color: tick, callback: v => fmtQ(v) } } } } });
+    }
+    const cv3 = document.getElementById('iact-' + u.name);
+    if (cv3 && it0 && it0.active) {
+      const a = it0.active, spot = (S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot, order = a.strikes.map((k, i) => i).sort((x, y) => a.strikes[y] - a.strikes[x]);
+      const near = a.strikes.reduce((bi, k, i) => Math.abs(k - spot) < Math.abs(a.strikes[bi] - spot) ? i : bi, 0);
+      const topC = new Set(a.calls.map(x => x.strike)), topP = new Set(a.puts.map(x => x.strike));
+      S.charts['iact' + u.name] = new Chart(cv3, { type: 'bar', data: { labels: order.map(i => (i === near ? '▶ ' : '') + fmt(a.strikes[i])), datasets: [
+        { label: 'Puts traded', data: order.map(i => -a.peVol[i]), backgroundColor: order.map(i => topP.has(a.strikes[i]) ? css('--pe') : 'rgba(235,104,52,.28)'), borderRadius: 2, stack: 's' },
+        { label: 'Calls traded', data: order.map(i => a.ceVol[i]), backgroundColor: order.map(i => topC.has(a.strikes[i]) ? css('--ce') : 'rgba(42,120,214,.28)'), borderRadius: 2, stack: 's' }] },
+        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { display: false }, tooltip: { callbacks: { title: x => 'Strike ' + x[0].label.replace('▶ ', ''), label: x => `${x.dataset.label}: ${fmtQ(Math.abs(x.parsed.x)).replace('+', '')}` } } },
+          scales: { x: { stacked: true, grid: { color: grid }, border: { display: false }, ticks: { color: tick, callback: v => { const a = Math.abs(v); return a >= 1e6 ? (a / 1e6).toFixed(0) + 'M' : a >= 1e3 ? Math.round(a / 1e3) + 'K' : a; } } },
+            y: { stacked: true, grid: { display: false }, ticks: { color: tick, font: { size: 11 } } } } } });
     }
     const cv2 = document.getElementById('ipcr-' + u.name);
     if (cv2 && it0 && base && it0.optSeries && it0.optSeries.length) {
