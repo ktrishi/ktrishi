@@ -778,7 +778,7 @@ function oiShift(open, now, spot) {
 /*ENGINE-END*/
 
 // ---------- connector + store
-const S = { mcp: null, db: null, indices: {}, panels: {}, locks: {}, outcomes: {}, weights: {}, hist: {}, trades: [], tradescores: [], intra: {}, diary: {}, positions: null, tab: 'today', tbSel: null, sel: {}, oiMode: {}, charts: {}, busy: false, err: null, dataMs: null };
+const S = { mcp: null, db: null, indices: {}, panels: {}, locks: {}, outcomes: {}, weights: {}, hist: {}, trades: [], tradescores: [], intra: {}, diary: {}, positions: null, tab: 'intra', tbSel: null, sel: {}, oiMode: {}, charts: {}, busy: false, err: null, dataMs: null };
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Every Kite call gives up after 25 s, so one stuck request can never freeze the page's refresh cycle.
@@ -1144,7 +1144,7 @@ function dtlabel(ms) { return new Date(ms).toLocaleString('en-IN', { day: 'numer
 function setStatus(text, cls) { const s = $('#status'); s.textContent = text; s.className = 'chip ' + (cls || ''); }
 function tabs() {
   const flipOn = S.flipBanner && Date.now() - S.flipBanner.ms < 30 * 60e3;
-  const list = [['today', 'Today'], ['intra', 'Intraday' + (flipOn ? ' ⚠' : '')]];
+  const list = [['intra', 'Intraday' + (flipOn ? ' ⚠' : '')], ['today', 'Today']];
   for (const u of UNDERLYINGS) list.push([u.name, u.label, S.panels[`${u.name}-${u.kinds[0]}`]]);
   list.push(['condor', 'Iron condor'], ['strangle', 'Short strangle'], ['range', 'Range view']);
   const pend = (S.proposals || []).filter(p => p.status === 'pending').length;
