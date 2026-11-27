@@ -159,6 +159,9 @@ tr:last-child td { border-bottom: 0; }
 .tbsel { flex-wrap: wrap; } .tbsel button { padding: 6px 12px; font-size: 12.5px; }
 tr.hl td { background: var(--surface2); font-weight: 600; }
 .nc { text-transform: none; }
+.intra { margin-top: 14px; } .intra h3 small { font-weight: 400; font-size: 12px; }
+.intra .why { margin: 8px 0; padding-left: 0; list-style: none; columns: 2 300px; font-size: 13px; } .intra .why li { margin: 2px 0; }
+.intra .strip { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; } .intra .strip .pill { text-transform: none; letter-spacing: 0; font-weight: 500; }
 .tdrow { display: grid; grid-template-columns: 230px 170px minmax(0, 1fr); gap: 6px 16px; padding: 11px 0; border-top: 1px solid var(--line); align-items: start; }
 .tdrow small { display: block; font-size: 12px; margin-top: 3px; }
 @media (max-width: 720px) { .tdrow { grid-template-columns: minmax(0, 1fr) auto; } .tdw { grid-column: 1 / -1; } }
@@ -619,10 +622,146 @@ function paperRecord(tradeScores, idx) {
   };
   return { condor: one('condor'), strangle: one('strangle') };
 }
+// ---- Intraday tracker: today's trend from futures price and open interest, levels, flips, signals, tomorrow's bias ----
+// candles: [{ms, open, high, low, close, volume, oi}] completed 15-minute futures bars, oldest first.
+const BUILDUP = { long_buildup: 'long build-up', short_buildup: 'short build-up', short_covering: 'short covering', long_unwinding: 'long unwinding', neutral: 'no clear build-up' };
+function buildupOf(prev, cur, pxEps = 0.0005, oiEps = 0.0005) {
+  if (!prev || !cur || !(prev.close > 0) || !(prev.oi > 0)) return 'neutral';
+  const dp = cur.close / prev.close - 1, doi = cur.oi / prev.oi - 1;
+  if (Math.abs(dp) < pxEps || Math.abs(doi) < oiEps) return 'neutral';
+  return dp > 0 ? (doi > 0 ? 'long_buildup' : 'short_covering') : (doi > 0 ? 'short_buildup' : 'long_unwinding');
+}
+function vwapOf(candles) {
+  let pv = 0, v = 0;
+  for (const c of candles || []) { const w = c.volume || 0; pv += (c.high + c.low + c.close) / 3 * w; v += w; }
+  return v > 0 ? pv / v : null;
+}
+function pivots(hlc) {
+  if (!hlc || hlc.length < 3) return null;
+  const [H, L, C] = hlc, P = (H + L + C) / 3, BC = (H + L) / 2, TC = 2 * P - BC;
+  return { P, R1: 2 * P - L, S1: 2 * P - H, R2: P + (H - L), S2: P - (H - L), BC, TC, H, L, C };
+}
+function openingRange(candles) {
+  if (!candles || candles.length < 2) return null;
+  return { high: Math.max(candles[0].high, candles[1].high), low: Math.min(candles[0].low, candles[1].low) };
+}
+const BUILD_W = { long_buildup: 1, short_covering: 0.5, short_buildup: -1, long_unwinding: -0.5, neutral: 0 };
+function trendScore({ candles, vwap, walls, wallsOpen, pcr, pcrOpen, vix, vixOpen, price }) {
+  const parts = [], add = (v, why) => { if (v) parts.push({ v, why }); };
+  const n = (candles || []).length, last = n ? candles[n - 1] : null;
+  if (!last) return { score: 0, label: 'Sideways', parts: [{ v: 0, why: 'no bars yet' }] };
+  const px = price > 0 ? price : last.close; // live price when given; bars only for structure and build-up
+  if (vwap) add(px > vwap * 1.0005 ? 1 : px < vwap * 0.9995 ? -1 : 0, `price ${fmt(px)} ${px >= vwap ? 'above' : 'below'} VWAP ${fmt(vwap)}`);
+  if (n >= 4) {
+    const w = candles.slice(-4); let hh = 0, ll = 0;
+    for (let i = 1; i < 4; i++) { if (w[i].high > w[i - 1].high && w[i].low > w[i - 1].low) hh++; if (w[i].high < w[i - 1].high && w[i].low < w[i - 1].low) ll++; }
+    add(hh >= 2 && ll === 0 ? 1 : ll >= 2 && hh === 0 ? -1 : 0, hh > ll ? 'higher highs and higher lows' : 'lower highs and lower lows');
+  }
+  const or = openingRange(candles);
+  if (or && n > 2) add(px > or.high ? 1 : px < or.low ? -1 : 0, px > or.high ? `above the opening-range high ${fmt(or.high)}` : px < or.low ? `below the opening-range low ${fmt(or.low)}` : `inside the opening range ${fmt(or.low)}–${fmt(or.high)}`);
+  if (n >= 2) {
+    const b = []; for (let i = Math.max(1, n - 4); i < n; i++) b.push(buildupOf(candles[i - 1], candles[i]));
+    const s = b.reduce((a, x) => a + BUILD_W[x], 0), cnt = {};
+    for (const x of b.filter(x => x !== 'neutral' && Math.sign(BUILD_W[x]) === Math.sign(s))) cnt[x] = (cnt[x] || 0) + 1;
+    const top = Object.keys(cnt).sort((x, y) => cnt[y] - cnt[x] || Math.abs(BUILD_W[y]) - Math.abs(BUILD_W[x]))[0]; // the build-up on the winning side
+    add(s >= 1.5 ? 1 : s <= -1.5 ? -1 : 0, `${BUILDUP[top] || 'mixed build-up'} in the last hour`);
+  }
+  if (walls && wallsOpen) {
+    const ds = walls.support - wallsOpen.support, dr = walls.resistance - wallsOpen.resistance;
+    add(ds > 0 && dr >= 0 ? 1 : dr < 0 && ds <= 0 ? -1 : 0, ds > 0 || dr > 0 ? `option walls moved up (support ${fmt(walls.support)}, resistance ${fmt(walls.resistance)})` : `option walls moved down (support ${fmt(walls.support)}, resistance ${fmt(walls.resistance)})`);
+  }
+  if (pcr != null && pcrOpen != null) { const d = pcr - pcrOpen; add(d >= 0.1 ? 0.5 : d <= -0.1 ? -0.5 : 0, `put/call ratio ${d >= 0 ? 'up' : 'down'} ${Math.abs(d).toFixed(2)} since the open (${d >= 0 ? 'put writing' : 'call writing'})`); }
+  if (vix && vixOpen && n) {
+    const dv = vix / vixOpen - 1, dp = last.close / candles[0].open - 1;
+    add(dv > 0.03 && dp < 0 ? -0.5 : dv < -0.03 && dp > 0 ? 0.5 : 0, `VIX ${dv > 0 ? 'rising' : 'falling'} ${Math.abs(dv * 100).toFixed(1)}% with price ${dp > 0 ? 'up' : 'down'}`);
+  }
+  const score = clamp(parts.reduce((a, p) => a + p.v, 0), -5, 5);
+  return { score, label: score >= 2 ? 'Up' : score <= -2 ? 'Down' : 'Sideways', parts };
+}
+// A new label must show on two consecutive checks before it replaces the confirmed one; that replacement is a flip.
+function trendTracker(st, label, ms) {
+  if (!st) return { confirmed: label, pending: null, since: ms, flip: null };
+  if (label === st.confirmed) return { ...st, pending: null, flip: null };
+  if (st.pending === label) return { confirmed: label, pending: null, since: ms, flip: { from: st.confirmed, to: label, ms } };
+  return { ...st, pending: label, flip: null };
+}
+function reversalWatch({ candles, trend, walls }) {
+  const n = (candles || []).length; if (n < 2 || !walls) return null;
+  const last = candles[n - 1], b = buildupOf(candles[n - 2], last);
+  if (trend === 'Up' && walls.resistance && last.high >= walls.resistance * 0.9985 && (b === 'short_buildup' || b === 'long_unwinding'))
+    return `up-trend pressing the call wall ${fmt(walls.resistance)} with ${BUILDUP[b]}: a reversal is possible`;
+  if (trend === 'Down' && walls.support && last.low <= walls.support * 1.0015 && (b === 'long_buildup' || b === 'short_covering'))
+    return `down-trend pressing the put wall ${fmt(walls.support)} with ${BUILDUP[b]}: a reversal is possible`;
+  return null;
+}
+// Unproven by design: every signal is scored on paper. Uses only completed bars.
+function signalCheck({ candles, vwap, or, prevHLC, walls, trend, lastSignalMs, nowMs }) {
+  const n = (candles || []).length, hm = ist(nowMs).hm;
+  if (n < 3 || !or || !vwap || hm < '09:30' || hm > '14:45') return null;
+  if (lastSignalMs && nowMs - lastSignalMs < 60 * 60e3) return null;
+  const last = candles[n - 1], prev = candles[n - 2], b = buildupOf(prev, last), pv = pivots(prevHLC);
+  const levels = [walls && walls.support, walls && walls.resistance, pv && pv.H, pv && pv.L, pv && pv.R1, pv && pv.S1, pv && pv.P, or.high, or.low].filter(x => x > 0);
+  const tries = trend === 'Up' ? [[or.high, `opening-range high ${fmt(or.high)}`], pv ? [pv.H, `previous day high ${fmt(pv.H)}`] : null]
+    : trend === 'Down' ? [[or.low, `opening-range low ${fmt(or.low)}`], pv ? [pv.L, `previous day low ${fmt(pv.L)}`] : null] : [];
+  for (const t of tries.filter(Boolean)) {
+    const [lvl, name] = t;
+    if (trend === 'Up' && prev.close <= lvl && last.close > lvl && (b === 'long_buildup' || b === 'short_covering') && last.close > vwap) {
+      const stop = Math.max(vwap, last.low), above = levels.filter(x => x > last.close * 1.001).sort((a, c) => a - c);
+      return { side: 'long', ms: nowMs, level: lvl, entry: last.close, stop, target: above.length ? above[0] : last.close + 1.5 * (last.close - stop),
+        why: `broke the ${name} with ${BUILDUP[b]}, above VWAP ${fmt(vwap)}` };
+    }
+    if (trend === 'Down' && prev.close >= lvl && last.close < lvl && (b === 'short_buildup' || b === 'long_unwinding') && last.close < vwap) {
+      const stop = Math.min(vwap, last.high), below = levels.filter(x => x < last.close * 0.999).sort((a, c) => c - a);
+      return { side: 'short', ms: nowMs, level: lvl, entry: last.close, stop, target: below.length ? below[0] : last.close - 1.5 * (stop - last.close),
+        why: `broke the ${name} with ${BUILDUP[b]}, below VWAP ${fmt(vwap)}` };
+    }
+  }
+  return null;
+}
+function scoreSignal(sig, candles) {
+  const d = sig.side === 'long' ? 1 : -1, after = (candles || []).filter(c => c.ms >= sig.ms);
+  const at = mins => { const done = after.filter(c => c.ms + 15 * 60e3 <= sig.ms + mins * 60e3); return done.length ? d * (done[done.length - 1].close - sig.entry) : null; };
+  const in60 = after.filter(c => c.ms + 15 * 60e3 <= sig.ms + 60 * 60e3);
+  const stopped = in60.some(c => d > 0 ? c.low <= sig.stop : c.high >= sig.stop);
+  const hit = in60.some(c => d > 0 ? c.high >= sig.target : c.low <= sig.target);
+  return { at30: at(30), at60: at(60), stopped, hitTarget: hit };
+}
+function tomorrowBias({ candles, vwap, pcrChange }) {
+  const n = (candles || []).length; if (n < 4) return null;
+  const last = candles[n - 1], hi = Math.max(...candles.map(c => c.high)), lo = Math.min(...candles.map(c => c.low)), reasons = []; let s = 0;
+  if (vwap) { const v = last.close > vwap ? 1 : -1; s += v; reasons.push(`closed ${v > 0 ? 'above' : 'below'} VWAP ${fmt(vwap)}`); }
+  const pos = hi > lo ? (last.close - lo) / (hi - lo) : 0.5;
+  if (pos >= 2 / 3) { s += 1; reasons.push('closed in the top third of the day’s range'); } else if (pos <= 1 / 3) { s -= 1; reasons.push('closed in the bottom third of the day’s range'); }
+  const day = buildupOf({ close: candles[0].open, oi: candles[0].oi }, last);
+  s += BUILD_W[day] >= 1 ? 1 : BUILD_W[day] <= -1 ? -1 : BUILD_W[day]; reasons.push(`day as a whole: ${BUILDUP[day]}`);
+  if (pcrChange != null && Math.abs(pcrChange) >= 0.1) { s += pcrChange > 0 ? 0.5 : -0.5; reasons.push(`put/call ratio ${pcrChange > 0 ? 'rose' : 'fell'} ${Math.abs(pcrChange).toFixed(2)} on the day`); }
+  return { score: s, label: s >= 1.5 ? 'Bullish' : s <= -1.5 ? 'Bearish' : 'Neutral', reasons };
+}
+function parseOptionSymbol(sym) {
+  const names = UNDERLYINGS.map(u => u.name).sort((a, b) => b.length - a.length), name = names.find(x => String(sym).startsWith(x));
+  if (!name) return null;
+  const rest = sym.slice(name.length);
+  if (/^\d{2}[A-Z]{3}FUT$/.test(rest)) return { idx: name, strike: null, type: 'FUT' };
+  const m = rest.match(/^\d{2}(?:[A-Z]{3}|[1-9OND]\d{2})(\d+)(CE|PE)$/);
+  return m ? { idx: name, strike: +m[1], type: m[2] } : null;
+}
+// Rishi's open positions against spot (net view only). Never stored.
+function positionRisk(rows, spots) {
+  const out = [];
+  for (const r of rows || []) {
+    if (r.view && r.view !== 'net') continue;
+    if (!r.quantity) continue;
+    const p = parseOptionSymbol(r.tradingsymbol), spot = p ? spots[p.idx] : null;
+    const distPct = p && p.strike && spot ? (p.strike / spot - 1) * 100 : null;
+    const short = r.quantity < 0, breach = !!(p && p.strike && spot && short && (p.type === 'CE' ? spot >= p.strike * 0.995 : p.type === 'PE' ? spot <= p.strike * 1.005 : false));
+    out.push({ symbol: r.tradingsymbol, idx: p && p.idx, type: p ? p.type : null, strike: p ? p.strike : null, qty: r.quantity, avg: r.average_price, ltp: r.last_price, pnl: +r.pnl || 0, distPct, breach });
+  }
+  return { rows: out, pnl: out.reduce((a, x) => a + x.pnl, 0), breaches: out.filter(x => x.breach).length };
+}
 /*ENGINE-END*/
 
 // ---------- connector + store
-const S = { mcp: null, db: null, indices: {}, panels: {}, locks: {}, outcomes: {}, weights: {}, hist: {}, trades: [], tradescores: [], tab: 'today', tbSel: null, sel: {}, oiMode: {}, charts: {}, busy: false, err: null, dataMs: null };
+const S = { mcp: null, db: null, indices: {}, panels: {}, locks: {}, outcomes: {}, weights: {}, hist: {}, trades: [], tradescores: [], intra: {}, diary: {}, positions: null, tab: 'today', tbSel: null, sel: {}, oiMode: {}, charts: {}, busy: false, err: null, dataMs: null };
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Every Kite call gives up after 25 s, so one stuck request can never freeze the page's refresh cycle.
@@ -659,6 +798,7 @@ async function dbSet(path, body) { if (!S.db) return false; try { await S.db.doc
 async function loadStore() {
   for (const d of await dbAll('latest')) { if (d.id.startsWith('index-')) S.indices[d.id.slice(6)] = d; else if (d.id.startsWith('hist-')) S.hist[d.id.slice(5)] = d; else S.panels[d.id] = d; }
   S.trades = await dbAll('trades');
+  for (const d of await dbAll('diary')) S.diary[d.id] = d;
   S.tradescores = await dbAll('tradescores');
   for (const d of await dbAll('locks')) S.locks[d.id] = d;
   for (const d of await dbAll('outcomes')) S.outcomes[d.id] = d;
@@ -771,6 +911,7 @@ async function refreshUnderlying(u, now) {
     S.panels[key] = panel;
     dbSet('latest/' + key, panel);
   }
+  try { await refreshIntraday(u, now, head[futId]); } catch (e) { (S.intra[u.name] = S.intra[u.name] || {}).err = (e && (e.message || e.code)) || 'error'; }
 }
 
 async function refresh() {
@@ -781,7 +922,152 @@ async function refresh() {
     try { await refreshUnderlying(u, now); ok++; } catch (e) { if (!S.err) S.err = Object.assign({ where: u.label }, e && typeof e === 'object' ? { code: e.code, message: e.message } : { message: String(e) }); }
   }
   if (ok) S.dataMs = Date.now();
+  if (ok) await refreshPositions();
   S.busy = false; $('#refresh').disabled = false; render();
+}
+
+// ---------- intraday tracker (runs in the page while it is open; one small diary doc per index per day)
+async function kiteTool(tool, args) {
+  let to; const timeout = new Promise((_, rej) => { to = setTimeout(() => rej({ code: 'server_unavailable', message: 'Kite did not answer within 25 seconds' }), 25e3); });
+  const r = await Promise.race([S.mcp.callTool('Kite', tool, args, { cache: false }), timeout]).finally(() => clearTimeout(to));
+  const p = r && (r.payload ?? r);
+  return p && p.data !== undefined ? p.data : p;
+}
+function bars15(p, now) {
+  const arr = (p && (p.candles || p.data || p)) || [];
+  return (Array.isArray(arr) ? arr : []).map(c => Array.isArray(c) ? { ms: Date.parse(c[0]), open: +c[1], high: +c[2], low: +c[3], close: +c[4], volume: +c[5], oi: +c[6] || 0 }
+    : { ms: Date.parse(c.date), open: +c.open, high: +c.high, low: +c.low, close: +c.close, volume: +c.volume, oi: +c.oi || 0 })
+    .filter(c => Number.isFinite(c.ms) && ist(c.ms).date === now.date && c.ms + 15 * 60e3 <= Date.now()); // completed bars of today only
+}
+function diaryOf(name, now) {
+  const id = `${name}-${now.date}`;
+  if (!S.diary[id]) S.diary[id] = { id, idx: name, date: now.date, open: null, snaps: [], flips: [], signals: [], bias: null };
+  return S.diary[id];
+}
+async function refreshIntraday(u, now, futQ) {
+  if (!futQ || now.dow === 0 || now.dow === 6 || now.hm < '09:15') return;
+  const it = S.intra[u.name] = S.intra[u.name] || {}, dia = diaryOf(u.name, now);
+  it.fut = { ltp: +futQ.last_price, oi: +futQ.oi || 0, vwap: +futQ.average_price || null, token: futQ.instrument_token };
+  if (it.fut.token && (!it.candlesMs || Date.now() - it.candlesMs > 14 * 60e3 || it.candlesDate !== now.date)) {
+    it.candles = bars15(await kiteTool('market', { mode: 'historical', instrument_token: it.fut.token, interval: '15minute', from_date: now.date + ' 09:15:00', to_date: now.date + ' 15:30:00', oi: true }), now);
+    it.candlesMs = Date.now(); it.candlesDate = now.date;
+  }
+  const c = it.candles || [], panel = S.panels[`${u.name}-${u.kinds[0]}`], sg = panel && panel.signals;
+  const walls = sg && sg.supports && sg.resistances && sg.supports[0] && sg.resistances[0] ? { support: sg.supports[0], resistance: sg.resistances[0] } : null;
+  const pcr = sg ? sg.pcrAtm : null, vix = (S.indices.NIFTY || {}).vix || null;
+  let dirty = false;
+  if (!dia.open && now.hm >= '09:30' && walls) { dia.open = { walls, pcr, vix, ms: Date.now() }; dirty = true; }
+  const vwap = it.fut.vwap || vwapOf(c), or = openingRange(c), H = S.hist[u.name], prevHLC = H && H.prevHLC;
+  const t = trendScore({ candles: c, vwap, walls, wallsOpen: dia.open && dia.open.walls, pcr, pcrOpen: dia.open && dia.open.pcr, vix, vixOpen: dia.open && dia.open.vix, price: it.fut.ltp });
+  it.trend = t; it.vwap = vwap; it.or = or; it.walls = walls; it.pcr = pcr; it.prevHLC = prevHLC; it.ms = Date.now();
+  it.tracker = trendTracker(it.tracker || (dia.flips.length ? { confirmed: dia.flips[dia.flips.length - 1].to, pending: null, since: dia.flips[dia.flips.length - 1].ms, flip: null } : null), t.label, Date.now());
+  if (it.tracker.flip) {
+    const f = { ...it.tracker.flip, score: t.score, reasons: t.parts.filter(p => p.v).map(p => p.why).slice(0, 4), price: it.fut.ltp };
+    dia.flips.push(f); S.flipBanner = { idx: u.name, label: u.label, ...f }; dirty = true;
+  }
+  it.reversal = reversalWatch({ candles: c, trend: it.tracker.confirmed, walls });
+  // signals: only on a newly completed bar, and scored as paper trades
+  const lastBar = c.length ? c[c.length - 1].ms : null;
+  if (lastBar && it.sigBar !== lastBar) {
+    it.sigBar = lastBar;
+    const lastSig = dia.signals.length ? dia.signals[dia.signals.length - 1].ms : null;
+    const s = signalCheck({ candles: c, vwap, or, prevHLC, walls, trend: it.tracker.confirmed, lastSignalMs: lastSig, nowMs: lastBar + 15 * 60e3 });
+    if (s) { dia.signals.push(s); S.sigBanner = { idx: u.name, label: u.label, ...s }; dirty = true; }
+  }
+  for (const s of dia.signals) if (!s.result || s.result.at60 == null) { const r = scoreSignal(s, c); if (JSON.stringify(r) !== JSON.stringify(s.result)) { s.result = r; dirty = true; } }
+  // diary snapshot every 30 minutes (on :15 and :45, after each pair of 15-minute bars)
+  const slot = (() => { const [h, m] = now.hm.split(':').map(Number), mins = h * 60 + m - 555; return mins < 0 ? null : Math.floor(mins / 30); })();
+  if (slot != null && now.hm <= '15:30' && !dia.snaps.some(x => x.slot === slot)) {
+    dia.snaps.push({ slot, hm: now.hm, fut: it.fut.ltp, spot: panel ? panel.spot : null, vwap, oi: it.fut.oi, build: c.length > 1 ? buildupOf(c[c.length - 2], c[c.length - 1]) : 'neutral',
+      label: it.tracker.confirmed, score: t.score, support: walls && walls.support, resistance: walls && walls.resistance, pcr, vix });
+    dia.snaps = dia.snaps.slice(-14); dirty = true;
+  }
+  if (!dia.bias && now.hm >= '15:25' && c.length >= 4) { dia.bias = tomorrowBias({ candles: c, vwap, pcrChange: dia.open && pcr != null && dia.open.pcr != null ? pcr - dia.open.pcr : null }); dirty = true; }
+  if (dirty) dbSet('diary/' + dia.id, dia);
+}
+async function refreshPositions() {
+  try { const r = await kiteTool('portfolio', { mode: 'positions', limit: 500 }); S.positions = Array.isArray(r) ? r : (r && r.data) || []; S.posErr = null; S.posMs = Date.now(); }
+  catch (e) { S.posErr = (e && (e.message || e.code)) || 'Kite error'; }
+}
+const BCLS = { long_buildup: 'p-good', short_covering: 'p-info', short_buildup: 'p-bad', long_unwinding: 'p-warn', neutral: 'p-neutral' };
+const BSHORT = { long_buildup: 'Long build', short_covering: 'Short cover', short_buildup: 'Short build', long_unwinding: 'Long unwind', neutral: 'Neutral' };
+const TCLS = { Up: 'p-good', Down: 'p-bad', Sideways: 'p-neutral' };
+function positionsCard(now) {
+  if (S.posErr && !S.positions) return `<div class="card"><h3>Your F&O positions</h3><p class="note" style="margin:0">Could not read positions from Kite (${esc(S.posErr)}). If claude.ai asks, allow this page to use Kite's read-only portfolio tool, then press Refresh.</p></div>`;
+  if (!S.positions) return `<div class="card"><h3>Your F&O positions</h3><p class="note" style="margin:0">Loading from Kite…</p></div>`;
+  const spots = Object.fromEntries(UNDERLYINGS.map(u => [u.name, (S.indices[u.name] || {}).spot]));
+  const r = positionRisk(S.positions.filter(x => x.exchange === 'NFO' || /NFO/.test(x.exchange || '')), spots);
+  if (!r.rows.length) return `<div class="card"><h3>Your F&O positions</h3><p class="note" style="margin:0">No open F&O positions.</p></div>`;
+  return `<div class="card"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline"><h3>Your F&O positions</h3><span><b class="${r.pnl >= 0 ? 'up' : 'dn'}">${rup(r.pnl)}</b> open P&L${r.breaches ? ` · <span class="pill p-bad">${r.breaches} short strike${r.breaches > 1 ? 's' : ''} at or past spot</span>` : ''}</span></div>
+    <div class="sub">Live from Kite at ${S.posMs ? tlabel(S.posMs) : '—'} IST (net positions). Read only and never saved.</div>
+    <div class="tw"><table><thead><tr><th>Contract</th><th class="r">P&L</th><th class="r">Strike vs spot</th><th></th><th class="r">Qty</th><th class="r">Avg</th><th class="r">LTP</th></tr></thead><tbody>
+    ${r.rows.sort((a, b) => a.pnl - b.pnl).map(x => `<tr${x.breach ? ' class="hl"' : ''}><td class="nw">${esc(x.symbol)}</td><td class="r ${x.pnl >= 0 ? 'up' : 'dn'}">${rup(x.pnl)}</td><td class="r">${x.distPct == null ? '—' : (x.distPct >= 0 ? '+' : '') + x.distPct.toFixed(2) + '%'}</td><td>${x.breach ? '<span class="pill p-bad">Breach</span>' : ''}</td><td class="r">${x.qty > 0 ? '+' : ''}${x.qty}</td><td class="r">${(+x.avg).toFixed(2)}</td><td class="r">${(+x.ltp).toFixed(2)}</td></tr>`).join('')}
+    </tbody></table></div></div>`;
+}
+function intraLevels(it, spot) {
+  const pv = pivots(it.prevHLC), L = [];
+  if (pv) L.push(['R2', pv.R2], ['R1', pv.R1], ['Previous high', pv.H], ['Pivot', pv.P], ['Previous low', pv.L], ['S1', pv.S1], ['S2', pv.S2]);
+  if (it.or) L.push(['Opening-range high', it.or.high], ['Opening-range low', it.or.low]);
+  if (it.vwap) L.push(['VWAP', it.vwap]);
+  if (it.walls) L.push(['Call wall (resistance)', it.walls.resistance], ['Put wall (support)', it.walls.support]);
+  const rows = L.filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
+  let placed = false; const out = [];
+  for (const [n, v] of rows) {
+    if (!placed && spot && v < spot) { out.push(`<tr class="hl"><td>Futures now</td><td class="r">${fmt(spot)}</td><td class="r">—</td></tr>`); placed = true; }
+    out.push(`<tr><td>${esc(n)}</td><td class="r">${fmt(v)}</td><td class="r">${spot ? ((v / spot - 1) * 100).toFixed(2) + '%' : '—'}</td></tr>`);
+  }
+  if (!placed && spot) out.push(`<tr class="hl"><td>Futures now</td><td class="r">${fmt(spot)}</td><td class="r">—</td></tr>`);
+  return `<div class="tw"><table><thead><tr><th>Level</th><th class="r">Value</th><th class="r">From futures</th></tr></thead><tbody>${out.join('')}</tbody></table></div>`;
+}
+function signalStats() {
+  const all = Object.values(S.diary).flatMap(d => d.signals || []).filter(s => s.result && s.result.at60 != null);
+  const win = all.filter(s => !s.result.stopped && s.result.at60 > 0).length;
+  return { n: all.length, win, pts: all.reduce((a, s) => a + (s.result.stopped ? -Math.abs(s.entry - s.stop) : s.result.at60), 0) };
+}
+function intradayView() {
+  const now = ist(), st = signalStats();
+  const cards = UNDERLYINGS.map(u => {
+    const it = S.intra[u.name], dia = S.diary[`${u.name}-${now.date}`];
+    if (!it || !it.trend) return `<div class="card"><h3>${esc(u.label)}</h3><p class="note" style="margin:0">${now.dow === 0 || now.dow === 6 ? 'Market closed today.' : 'Waiting for today’s first futures bars from Kite (from 09:15, every 15 minutes).'}</p></div>`;
+    const tr = it.tracker || { confirmed: it.trend.label }, c = it.candles || [], last = dia && dia.flips.length ? dia.flips[dia.flips.length - 1] : null;
+    const strip = c.slice(1).map((b, i) => { const k = buildupOf(c[i], b); return `<span class="pill ${BCLS[k]}" title="${tlabel(b.ms)}: ${esc(BUILDUP[k])}">${tlabel(b.ms)} ${BSHORT[k]}</span>`; }).join(' ');
+    const sigs = (dia && dia.signals) || [];
+    return `<section class="card intra"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline">
+      <h3>${esc(u.label)} futures: <span class="pill ${TCLS[tr.confirmed]}" style="font-size:13px">${esc(tr.confirmed)}</span> <small class="mut">score ${it.trend.score >= 0 ? '+' : ''}${it.trend.score.toFixed(1)} · ${tr.pending ? 'turning ' + esc(tr.pending) + '? (needs one more check)' : 'confirmed'}</small></h3>
+      <span class="mut">Futures ${fmt(it.fut.ltp)} · VWAP ${fmt(it.vwap)} · OI ${(it.fut.oi / 1e6).toFixed(2)}M · ${tlabel(it.ms)} IST</span></div>
+      ${last ? `<div class="banner ${last.to === 'Up' ? 'info' : last.to === 'Down' ? 'bad' : ''}" style="margin:8px 0">Trend change at ${tlabel(last.ms)}: ${esc(last.from)} → <b>${esc(last.to)}</b> at ${fmt(last.price)}. ${esc((last.reasons || []).join('; '))}.</div>` : ''}
+      ${it.reversal ? `<div class="banner" style="margin:8px 0">Reversal watch: ${esc(it.reversal)}.</div>` : ''}
+      <ul class="why">${it.trend.parts.map(p => `<li><span class="${p.v > 0 ? 'up' : p.v < 0 ? 'dn' : 'mut'}">${p.v > 0 ? '▲' : p.v < 0 ? '▼' : '•'}</span> ${esc(p.why)}</li>`).join('')}</ul>
+      <div class="strip">${strip || '<span class="mut">Build-up appears after the second 15-minute bar.</span>'}</div>
+      <div class="grid" style="margin-top:12px"><div class="s5">${intraLevels(it, it.fut.ltp)}</div><div class="s7"><div class="chart-box"><canvas id="intra-${u.name}" role="img" aria-label="${esc(u.label)} futures price, VWAP and open interest today"></canvas></div></div></div>
+      <h4 style="margin:14px 0 6px">Opportunity lines <small class="mut">unproven: paper-traded and scored</small></h4>
+      ${sigs.length ? `<div class="tw"><table><thead><tr><th>Time</th><th>Side</th><th class="r">Entry</th><th class="r">Invalid at</th><th class="r">Target</th><th>Why</th><th class="r">+30m</th><th class="r">+60m</th></tr></thead><tbody>${sigs.map(s => { const r = s.result || {}, f = x => x == null ? '…' : `<span class="${x >= 0 ? 'up' : 'dn'}">${x >= 0 ? '+' : ''}${x.toFixed(0)}</span>`;
+        return `<tr><td>${tlabel(s.ms)}</td><td><span class="pill ${s.side === 'long' ? 'p-good' : 'p-bad'}">${s.side}</span></td><td class="r">${fmt(s.entry)}</td><td class="r">${fmt(s.stop)}</td><td class="r">${fmt(s.target)}</td><td>${esc(s.why)}</td><td class="r">${f(r.at30)}</td><td class="r">${f(r.at60)}${r.stopped ? ' <small class="dn">stopped</small>' : ''}</td></tr>`; }).join('')}</tbody></table></div>`
+        : '<p class="note" style="margin:0">None yet today. A line appears only when the confirmed trend and a fresh break of the opening range or the previous day’s high/low agree, with matching build-up and the right side of VWAP.</p>'}
+      ${dia && dia.snaps.length ? `<h4 style="margin:14px 0 6px">Diary (every 30 minutes)</h4><div class="tw"><table><thead><tr><th>Time</th><th class="r">Futures</th><th class="r">VWAP</th><th class="r">OI</th><th>Build-up</th><th>Trend</th><th class="r">Support</th><th class="r">Resistance</th><th class="r">PCR</th></tr></thead><tbody>${dia.snaps.map(x => `<tr><td>${x.hm}</td><td class="r">${fmt(x.fut)}</td><td class="r">${fmt(x.vwap)}</td><td class="r">${(x.oi / 1e6).toFixed(2)}M</td><td><span class="pill ${BCLS[x.build]}">${BSHORT[x.build]}</span></td><td><span class="pill ${TCLS[x.label]}">${x.label}</span> ${x.score >= 0 ? '+' : ''}${(+x.score).toFixed(1)}</td><td class="r">${fmt(x.support)}</td><td class="r">${fmt(x.resistance)}</td><td class="r">${x.pcr == null ? '—' : (+x.pcr).toFixed(2)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      <h4 style="margin:14px 0 6px">Tomorrow’s bias</h4>
+      ${dia && dia.bias ? `<p style="margin:0"><span class="pill ${dia.bias.label === 'Bullish' ? 'p-good' : dia.bias.label === 'Bearish' ? 'p-bad' : 'p-neutral'}">${dia.bias.label}</span> ${esc(dia.bias.reasons.join('; '))}.</p>` : '<p class="note" style="margin:0">Appears after 15:25, from the close against VWAP, where it closed in the day’s range, the day’s open-interest build-up and the put/call change.</p>'}
+    </section>`;
+  }).join('');
+  return `${positionsCard(now)}
+    <div class="banner info" style="margin:14px 0">Trader’s diary for today. Trend from 15-minute futures bars (price, open interest, VWAP), the opening range, the previous day’s levels and the option open-interest walls; checked every 5 minutes while this page is open. A trend change needs two checks in a row. Opportunity lines are <b>unproven</b>: ${st.n ? `${st.win} of ${st.n} scored signals were ahead after 60 minutes without hitting their invalidation (${st.pts >= 0 ? '+' : ''}${st.pts.toFixed(0)} points in all)` : 'none scored yet'}. Not advice; nothing is ever ordered.</div>
+    ${cards}`;
+}
+function drawIntraday() {
+  if (typeof Chart === 'undefined') return;
+  const tick = css('--muted'), grid = css('--line');
+  for (const u of UNDERLYINGS) {
+    const cv = document.getElementById('intra-' + u.name), it = S.intra[u.name]; if (!cv || !it || !it.candles || !it.candles.length) continue;
+    const c = it.candles; let pv = 0, vv = 0; const vw = c.map(b => { pv += (b.high + b.low + b.close) / 3 * b.volume; vv += b.volume; return vv ? pv / vv : null; });
+    S.charts['intra' + u.name] = new Chart(cv, { data: { labels: c.map(b => tlabel(b.ms)), datasets: [
+      { type: 'line', label: 'Futures', data: c.map(b => b.close), borderColor: css('--ce'), backgroundColor: css('--ce'), borderWidth: 2, pointRadius: 2, yAxisID: 'y' },
+      { type: 'line', label: 'VWAP', data: vw, borderColor: css('--fwd'), borderDash: [5, 4], borderWidth: 2, pointRadius: 0, yAxisID: 'y' },
+      { type: 'bar', label: 'Open interest', data: c.map(b => b.oi), backgroundColor: css('--band68'), yAxisID: 'y2' }] },
+      options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { labels: { color: tick, boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { label: x => `${x.dataset.label}: ${x.dataset.yAxisID === 'y2' ? (x.parsed.y / 1e6).toFixed(2) + 'M' : fmt(x.parsed.y)}` } } },
+        scales: { x: { grid: { display: false }, ticks: { color: tick, maxRotation: 0, autoSkipPadding: 8 } }, y: { grid: { color: grid }, border: { display: false }, ticks: { color: tick, callback: v => fmt(v) } },
+          y2: { position: 'right', grid: { display: false }, border: { display: false }, ticks: { color: tick, callback: v => (v / 1e6).toFixed(1) + 'M' } } } } });
+  }
 }
 
 // ---------- rendering
@@ -794,7 +1080,8 @@ function tlabel(ms) { return new Date(ms).toLocaleTimeString('en-IN', { hour: '2
 function dtlabel(ms) { return new Date(ms).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }); }
 function setStatus(text, cls) { const s = $('#status'); s.textContent = text; s.className = 'chip ' + (cls || ''); }
 function tabs() {
-  const list = [['today', 'Today']];
+  const flipOn = S.flipBanner && Date.now() - S.flipBanner.ms < 30 * 60e3;
+  const list = [['today', 'Today'], ['intra', 'Intraday' + (flipOn ? ' ⚠' : '')]];
   for (const u of UNDERLYINGS) list.push([u.name, u.label, S.panels[`${u.name}-${u.kinds[0]}`]]);
   list.push(['condor', 'Iron condor'], ['strangle', 'Short strangle'], ['range', 'Range view']);
   const pend = (S.proposals || []).filter(p => p.status === 'pending').length;
@@ -809,11 +1096,15 @@ function render() {
   else if (S.dataMs) setStatus((market ? 'Kite ✔ live · ' : 'Market closed · ') + 'data ' + tlabel(S.dataMs) + ' IST', market ? 'live' : '');
   renderTicker();
   $('#asof').textContent = S.dataMs ? 'Updated ' + dtlabel(S.dataMs) + ' IST · refreshes every 5 min while open in market hours' : 'Nifty: 3 weeklies + monthly · Bank Nifty: monthly';
-  $('#banner').innerHTML = S.err ? `<div class="banner bad">${esc(errText(S.err))}${Object.keys(S.panels).length ? ' Showing the last saved data below.' : ''}</div>` : '';
+  $('#banner').innerHTML = (S.err ? `<div class="banner bad">${esc(errText(S.err))}${Object.keys(S.panels).length ? ' Showing the last saved data below.' : ''}</div>` : '')
+    + (S.flipBanner && Date.now() - S.flipBanner.ms < 30 * 60e3 ? `<div class="banner ${S.flipBanner.to === 'Down' ? 'bad' : 'info'}">⚠ ${esc(S.flipBanner.label)} trend change at ${tlabel(S.flipBanner.ms)}: ${esc(S.flipBanner.from)} → <b>${esc(S.flipBanner.to)}</b>. ${esc((S.flipBanner.reasons || []).slice(0, 2).join('; '))}. <button class="linkbtn" data-goto="intra">Intraday tab →</button></div>` : '')
+    + (S.sigBanner && Date.now() - S.sigBanner.ms < 30 * 60e3 ? `<div class="banner">Opportunity line (unproven): ${esc(S.sigBanner.label)} ${esc(S.sigBanner.side)} at ${fmt(S.sigBanner.entry)}, invalid at ${fmt(S.sigBanner.stop)}, target ${fmt(S.sigBanner.target)}. <button class="linkbtn" data-goto="intra">Intraday tab →</button></div>` : '');
+  $('#banner').querySelectorAll('[data-goto]').forEach(b => b.onclick = () => { S.tab = b.dataset.goto; render(); });
   Object.values(S.charts).forEach(c => c.destroy()); S.charts = {};
   const v = $('#view');
   const hook = () => { v.querySelectorAll('[data-tbsel] button').forEach(b => b.onclick = () => { S.tbSel = b.dataset.k; render(); }); v.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => { S.tab = b.dataset.goto; render(); }); };
   if (S.tab === 'today') { v.innerHTML = todayView(); return; }
+  if (S.tab === 'intra') { v.innerHTML = intradayView(); drawIntraday(); return; }
   if (S.tab === 'condor' || S.tab === 'strangle') { v.innerHTML = structView(S.tab); hook(); drawPayoff(S.tab); return; }
   if (S.tab === 'range') { v.innerHTML = rangeTabView(); hook(); return; }
   if (S.tab === 'track') { v.innerHTML = trackView() + paperView(); drawTrack(); return; }
