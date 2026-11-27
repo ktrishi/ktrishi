@@ -159,6 +159,12 @@ tr:last-child td { border-bottom: 0; }
 .tbsel { flex-wrap: wrap; } .tbsel button { padding: 6px 12px; font-size: 12.5px; }
 tr.hl td { background: var(--surface2); font-weight: 600; }
 .nc { text-transform: none; }
+.kbs > .kb { grid-column: span 6; } @media (max-width: 900px) { .kbs > .kb { grid-column: 1 / -1; } }
+.kb-h { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; } .kb-h h3 { margin: 0; }
+.kb-g { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; } @media (max-width: 520px) { .kb-g { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kb-t { background: var(--surface2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+.kb-t .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; } .kb-t .v { font: 600 17px/1.3 var(--serif); margin-top: 2px; } .kb-t .v small { font: 400 11.5px var(--sans); }
+.kb-t .d { font-size: 12px; color: var(--muted); margin-top: 2px; } .kb-t .d .pill { text-transform: none; letter-spacing: 0; }
 .intra { margin-top: 14px; } .intra h3 small { font-weight: 400; font-size: 12px; }
 .intra .why { margin: 8px 0; padding-left: 0; list-style: none; columns: 2 300px; font-size: 13px; } .intra .why li { margin: 2px 0; }
 .intra .strip { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; } .intra .strip .pill { text-transform: none; letter-spacing: 0; font-weight: 500; }
@@ -1028,7 +1034,7 @@ function positionsCard(now) {
   return `<div class="card"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline"><h3>Your F&O positions</h3><span><b class="${r.pnl >= 0 ? 'up' : 'dn'}">${rup(r.pnl)}</b> open P&L${r.breaches ? ` · <span class="pill p-bad">${r.breaches} short strike${r.breaches > 1 ? 's' : ''} at or past spot</span>` : ''}</span></div>
     <div class="sub">Live from Kite at ${S.posMs ? tlabel(S.posMs) : '—'} IST (net positions). Read only and never saved.</div>
     <div class="tw"><table><thead><tr><th>Contract</th><th class="r">P&L</th><th class="r">Strike vs spot</th><th></th><th class="r">Qty</th><th class="r">Avg</th><th class="r">LTP</th></tr></thead><tbody>
-    ${r.rows.sort((a, b) => a.pnl - b.pnl).map(x => `<tr${x.breach ? ' class="hl"' : ''}><td class="nw">${esc(x.symbol)}</td><td class="r ${x.pnl >= 0 ? 'up' : 'dn'}">${rup(x.pnl)}</td><td class="r">${x.distPct == null ? '—' : (x.distPct >= 0 ? '+' : '') + x.distPct.toFixed(2) + '%'}</td><td>${x.breach ? '<span class="pill p-bad">Breach</span>' : ''}</td><td class="r">${x.qty > 0 ? '+' : ''}${x.qty}</td><td class="r">${(+x.avg).toFixed(2)}</td><td class="r">${(+x.ltp).toFixed(2)}</td></tr>`).join('')}
+    ${r.rows.sort((a, b) => a.pnl - b.pnl).map(x => `<tr${x.breach ? ' class="hl"' : ''}><td class="nw">${esc(x.symbol)}</td><td class="r nw ${x.pnl >= 0 ? 'up' : 'dn'}">${rup(x.pnl)}</td><td class="r">${x.distPct == null ? '—' : (x.distPct >= 0 ? '+' : '') + x.distPct.toFixed(2) + '%'}</td><td>${x.breach ? '<span class="pill p-bad">Breach</span>' : ''}</td><td class="r">${x.qty > 0 ? '+' : ''}${x.qty}</td><td class="r">${(+x.avg).toFixed(2)}</td><td class="r">${(+x.ltp).toFixed(2)}</td></tr>`).join('')}
     </tbody></table></div></div>`;
 }
 function intraLevels(it, spot) {
@@ -1061,6 +1067,40 @@ function optionChangeBlock(u, it, dia) {
     <div class="grid"><div class="s7"><div class="sub" style="margin:0 0 4px">Change by strike: bars up = added, down = cut. Dashed line = spot.</div><div class="chart-box"><canvas id="ioi-${u.name}" role="img" aria-label="${esc(u.label)} change in call and put open interest by strike since ${tlabel(base.ms)}"></canvas></div></div>
       <div class="s5"><div class="sub" style="margin:0 0 4px">Total change through the day, and the put/call ratio</div><div class="chart-box"><canvas id="ipcr-${u.name}" role="img" aria-label="${esc(u.label)} total call and put open interest change and put/call ratio through the day"></canvas></div></div></div>`;
 }
+// Key signals first: one compact panel per index, the reads a trader checks every few minutes.
+function keyBoard(now) {
+  const arrow = d => d > 0 ? '<span class="up">▲</span>' : d < 0 ? '<span class="dn">▼</span>' : '<span class="mut">•</span>';
+  const tile = (l, v, d) => `<div class="kb-t"><div class="l">${l}</div><div class="v">${v}</div><div class="d">${d}</div></div>`;
+  const panels = UNDERLYINGS.map(u => {
+    const it = S.intra[u.name], dia = S.diary[`${u.name}-${now.date}`];
+    if (!it || !it.trend) return `<div class="card kb"><h3>${esc(u.label)}</h3><p class="note" style="margin:0">Waiting for today’s first futures bars.</p></div>`;
+    const tr = it.tracker || { confirmed: it.trend.label }, px = it.fut.ltp, c = it.candles || [], open = dia && dia.open;
+    // VWAP drift over the last 30 minutes, from the 15-minute bars
+    let pv = 0, vv = 0; const vw = c.map(b => { pv += (b.high + b.low + b.close) / 3 * b.volume; vv += b.volume; return vv ? pv / vv : null; });
+    const vwNow = it.vwap, vwPrev = vw.length > 2 ? vw[vw.length - 3] : null, vwD = vwNow && vwPrev ? vwNow - vwPrev : null;
+    const dVw = vwNow ? (px / vwNow - 1) * 100 : null;
+    const w = it.walls, w0 = open && open.walls;
+    const wall = (now1, then1) => now1 ? `${fmt(now1)} ${then1 && then1 !== now1 ? `${arrow(now1 - then1)} <small class="mut">from ${fmt(then1)}</small>` : '<small class="mut">unchanged since 09:30</small>'}` : '—';
+    const vix = (S.indices.NIFTY || {}).vix, vix0 = open && open.vix, dv = vix && vix0 ? (vix / vix0 - 1) * 100 : null;
+    const first = c[0], dayB = first ? buildupOf({ close: first.open, oi: first.oi }, { close: px, oi: it.fut.oi }) : 'neutral';
+    const dP = first ? (px / first.open - 1) * 100 : null, dOi = first && first.oi ? (it.fut.oi / first.oi - 1) * 100 : null;
+    const flip = dia && dia.flips.length ? dia.flips[dia.flips.length - 1] : null, flipNew = flip && Date.now() - flip.ms < 30 * 60e3;
+    const sh = it.shift;
+    return `<div class="card kb"><div class="kb-h"><h3>${esc(u.label)}</h3><span class="pill ${TCLS[tr.confirmed]}" style="font-size:13px">${esc(tr.confirmed)} ${it.trend.score >= 0 ? '+' : ''}${it.trend.score.toFixed(1)}</span>
+        <small class="mut">${tr.pending ? 'turning ' + esc(tr.pending) + '?' : flip ? 'since ' + tlabel(flip.ms) : 'no flip today'}</small></div>
+      ${flipNew ? `<div class="banner ${flip.to === 'Down' ? 'bad' : 'info'}" style="margin:6px 0">⚠ Trend change ${tlabel(flip.ms)}: ${esc(flip.from)} → <b>${esc(flip.to)}</b></div>` : ''}
+      ${it.reversal ? `<div class="banner" style="margin:6px 0">Reversal watch: ${esc(it.reversal)}</div>` : ''}
+      <div class="kb-g">
+        ${tile('Futures vs VWAP', dVw == null ? '—' : `${dVw >= 0 ? '+' : ''}${dVw.toFixed(2)}%`, `VWAP ${fmt(vwNow)}${vwD == null ? '' : ` ${arrow(vwD)} ${vwD >= 0 ? '+' : ''}${fmt(vwD)} in 30 min`}`)}
+        ${tile('Support (put wall)', wall(w && w.support, w0 && w0.support), '')}
+        ${tile('Resistance (call wall)', wall(w && w.resistance, w0 && w0.resistance), '')}
+        ${tile('India VIX', vix ? vix.toFixed(2) : '—', dv == null ? 'vs 09:30: —' : `${arrow(dv)} ${dv >= 0 ? '+' : ''}${dv.toFixed(1)}% vs 09:30 (${(+vix0).toFixed(2)})`)}
+        ${tile('Option writing since 09:30', sh ? `<span class="${sh.tilt === 'bullish' ? 'up' : sh.tilt === 'bearish' ? 'dn' : ''}">${sh.tilt === 'bullish' ? 'Puts dominant' : sh.tilt === 'bearish' ? 'Calls dominant' : 'Balanced'}</span>` : '—', sh ? `calls ${fmtQ(sh.ceAdd)} · puts ${fmtQ(sh.peAdd)}` : 'from the first check after 09:30')}
+        ${tile('Futures today', dP == null ? '—' : `${dP >= 0 ? '+' : ''}${dP.toFixed(2)}%`, `OI ${dOi == null ? '—' : (dOi >= 0 ? '+' : '') + dOi.toFixed(1) + '%'} · <span class="pill ${BCLS[dayB]}">${BSHORT[dayB]}</span>`)}
+      </div></div>`;
+  }).join('');
+  return `<div class="grid kbs">${panels}</div>`;
+}
 function intradayView() {
   const now = ist(), st = signalStats();
   const cards = UNDERLYINGS.map(u => {
@@ -1087,7 +1127,8 @@ function intradayView() {
       ${dia && dia.bias ? `<p style="margin:0"><span class="pill ${dia.bias.label === 'Bullish' ? 'p-good' : dia.bias.label === 'Bearish' ? 'p-bad' : 'p-neutral'}">${dia.bias.label}</span> ${esc(dia.bias.reasons.join('; '))}.</p>` : '<p class="note" style="margin:0">Appears after 15:25, from the close against VWAP, where it closed in the day’s range, the day’s open-interest build-up and the put/call change.</p>'}
     </section>`;
   }).join('');
-  return `${positionsCard(now)}
+  return `${keyBoard(now)}
+    <div style="margin-top:14px">${positionsCard(now)}</div>
     <div class="banner info" style="margin:14px 0">Trader’s diary for today. Trend from 15-minute futures bars (price, open interest, VWAP), the opening range, the previous day’s levels and the option open-interest walls; checked every 5 minutes while this page is open. A trend change needs two checks in a row. Opportunity lines are <b>unproven</b>: ${st.n ? `${st.win} of ${st.n} scored signals were ahead after 60 minutes without hitting their invalidation (${st.pts >= 0 ? '+' : ''}${st.pts.toFixed(0)} points in all)` : 'none scored yet'}. Not advice; nothing is ever ordered.</div>
     ${cards}`;
 }
