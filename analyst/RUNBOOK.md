@@ -48,6 +48,13 @@ On a Saturday or Sunday, stop and reply `F&O <slot>: weekend, nothing run.`
 **Kite:**
 - `session` with `mode: "status"`.
 - `market` with `mode: "quote"` and `instruments: ["NSE:NIFTY 50","NSE:NIFTY BANK","NSE:INDIA VIX"]`.
+  - *(Morning)* Add the **macro instruments** to the same call:
+    - `NSE:NIFTY GS 10YR`
+    - USD/INR futures `CDS:USDINR<YY><MON>FUT` and crude `MCX:CRUDEOIL<YY><MON>FUT`, each for this month and next month
+    - gold `MCX:GOLD<YY><MON>FUT` for the next two even months (FEB, APR, JUN, AUG, OCT, DEC), counting this month if it is even
+
+    For example, in late November 2026: `CDS:USDINR26DECFUT`, `CDS:USDINR27JANFUT`, `MCX:CRUDEOIL26DECFUT`, `MCX:CRUDEOIL27JANFUT`, `MCX:GOLD26DECFUT`, `MCX:GOLD27FEBFUT`.
+    - Symbols that do not exist come back under `missing_instruments`. Ignore them, and use the earliest month that has a price.
 
 **ArtifactData**, each with `out_dir: "W/dump"`:
 - `list` with `query: {"limit": 1000}` for each of `locks`, `outcomes`, `scores`, `proposals`, `weights`, `config`, `postmortems`, `trades` and `tradescores`.
@@ -109,7 +116,9 @@ node R/analyst/prep.js plan --latest W/dump/analyst/latest.json --spot 'NIFTY=<s
 
 ## 6. Events (one message, all calls in parallel)
 **Calls:**
-- **Every run:** one `firecrawl_search` with `query: "Nifty Bank Nifty market news today"`, `sources: ["news"]` and `limit: 3`.
+- **Every run:** one `firecrawl_search` with `sources: ["news"]` and `limit: 3`.
+  - Morning query: `"Nifty Bank Nifty market news today Brent crude US 10-year Treasury yield"`.
+  - Afternoon query: `"Nifty Bank Nifty market news today"`.
 - **Weekly calendar refresh:** on the morning run, when it is Monday or `EVENTS_VERIFIED` is more than 6 days old, also search:
   - `"India economic calendar this week RBI MoSPI"`
   - `"US Fed CPI jobs data this week"`
@@ -163,6 +172,13 @@ F&O <slot> <OK|PROBLEM: what>. <verdicts>. Nifty wk <centre> (<68% low>-<68% hig
   - Name any TRADE explicitly, for example `TRADE: Nifty wk condor 25,900/26,450 - check bid/ask`.
   - Quote verdicts as printed. Never upgrade one, and never suggest sizing.
 - **PROBLEM:** use it for a failed batch, fewer than 5 contracts, or no price history (`no price history - open the dashboard`).
+
+**Line 2, macro (morning only).** One line, plain text, so it shows under the phone line:
+```
+Macro: USDINR <fut> | MCX gold <₹/10g> | MCX crude <₹/bbl> | G-Sec 10Y idx <±x.xx%> (yields <up|down>) | UST10Y <y.yy%> | Brent $<n>
+```
+- **Kite values:** from the step 1 quote. For the G-Sec index, use `(last_price / ohlc.close − 1)`. The index rising means yields fell.
+- **UST10Y and Brent:** take these from the news search only if a result states the value for today or the previous session. Otherwise write `n/a`. Never estimate one.
 
 **Then, after a blank line:**
 - a compact table: contract | centre | 68% range | overlay ×, plus the verdict on the morning run

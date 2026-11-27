@@ -47,7 +47,7 @@ Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked
 4. **Settle and build in one Bash call:** `run.js settle --state-out` (morning) and `prep.js build`, which writes `input.json` from the saved quote files with no hand transcription. Then write the settle batches.
 5. **Events in one message:** one news search with `limit: 3`. Official date checks only for new events; a full calendar refresh on Monday or once a week.
 6. **Lock:** `run.js lock --research research.json`, then write the batches.
-7. **Reply:** the phone line, then a compact table. Nothing else. Both scheduled tasks push the reply's first line to Rishi's phone, so problems come first and it stays under 200 characters.
+7. **Reply:** the phone line, then (morning) a macro line. The macro line covers USD/INR futures, MCX gold and crude, and the Nifty 10Y G-Sec index change, all from the same Kite quote call, plus the US 10Y yield and Brent from the news search (or n/a, never estimated). Then a compact table. Nothing else. Both scheduled tasks push the reply's first line to Rishi's phone, so problems come first and it stays under 200 characters.
 
 **Why the run is built this way:**
 - Never read the dump, quote or batch files into the conversation; the scripts read them.
