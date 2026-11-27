@@ -160,3 +160,18 @@ test('most active options near spot: ranked by open-interest change since the ba
   assert.deepEqual(noBase.calls.map(x => x.strike), [26000, 26100, 25900], 'ranked by outstanding open interest');
   assert.equal(noBase.calls[0].read, null, 'no baseline: no read');
 });
+
+test('trend tracker with a minimum hold time: two checks are not enough until the time has passed', () => {
+  let st = eng.trendTracker(null, 'Up', 0, 180e3);
+  st = eng.trendTracker(st, 'Down', 60e3, 180e3); assert.equal(st.confirmed, 'Up');
+  st = eng.trendTracker(st, 'Down', 120e3, 180e3); assert.equal(st.confirmed, 'Up', 'only 1 minute held');
+  st = eng.trendTracker(st, 'Down', 240e3, 180e3); assert.equal(st.confirmed, 'Down'); assert.equal(st.flip.from, 'Up');
+  st = eng.trendTracker(st, 'Up', 300e3, 180e3); st = eng.trendTracker(st, 'Sideways', 360e3, 180e3); st = eng.trendTracker(st, 'Sideways', 600e3, 180e3);
+  assert.equal(st.confirmed, 'Sideways', 'a new pending label restarts the clock');
+});
+
+test('a baseline with no change yet falls back to outstanding open interest', () => {
+  const ch = { strikes: [25900, 26000], ce: [10, 20], pe: [30, 40], ceLtp: [5, 3], peLtp: [4, 6] };
+  const a = eng.activeOptions(ch, { ...ch }, 25950, { band: 0.015, n: 3 });
+  assert.equal(a.mode, 'outstanding'); assert.equal(a.ceChg, null); assert.deepEqual(a.calls.map(x => x.strike), [26000, 25900]);
+});

@@ -684,12 +684,13 @@ function trendScore({ candles, vwap, walls, wallsOpen, pcr, pcrOpen, vix, vixOpe
   const score = clamp(parts.reduce((a, p) => a + p.v, 0), -5, 5);
   return { score, label: score >= 2 ? 'Up' : score <= -2 ? 'Down' : 'Sideways', parts };
 }
-// A new label must show on two consecutive checks before it replaces the confirmed one; that replacement is a flip.
-function trendTracker(st, label, ms) {
-  if (!st) return { confirmed: label, pending: null, since: ms, flip: null };
-  if (label === st.confirmed) return { ...st, pending: null, flip: null };
-  if (st.pending === label) return { confirmed: label, pending: null, since: ms, flip: { from: st.confirmed, to: label, ms } };
-  return { ...st, pending: label, flip: null };
+// A new label must show on two consecutive checks, and for at least minMs, before it replaces the confirmed one: a flip.
+function trendTracker(st, label, ms, minMs = 0) {
+  if (!st) return { confirmed: label, pending: null, pendingMs: null, since: ms, flip: null };
+  if (label === st.confirmed) return { ...st, pending: null, pendingMs: null, flip: null };
+  if (st.pending === label && ms - (st.pendingMs ?? ms) >= minMs) return { confirmed: label, pending: null, pendingMs: null, since: ms, flip: { from: st.confirmed, to: label, ms } };
+  if (st.pending === label) return { ...st, flip: null };
+  return { ...st, pending: label, pendingMs: ms, flip: null };
 }
 function reversalWatch({ candles, trend, walls }) {
   const n = (candles || []).length; if (n < 2 || !walls) return null;
@@ -800,7 +801,9 @@ function activeOptions(ch, base, spot, { band = 0.015, n = 3 } = {}) {
     }
     return { strike: k, type: t, vol, ltp, oi, dLtpPct, dOi, read, view: read ? OPT_VIEW[t][read] : null };
   };
-  const mode = bi && base.ceLtp ? 'change' : 'outstanding';
+  let mode = bi && base.ceLtp ? 'change' : 'outstanding';
+  // a baseline taken moments ago shows no change yet: show outstanding contracts until something moves
+  if (mode === 'change' && idx.every(i => { const k = ch.strikes[i]; if (!bi.has(k)) return true; const j = bi.get(k); return (ch.ce[i] || 0) === (base.ce[j] || 0) && (ch.pe[i] || 0) === (base.pe[j] || 0); })) mode = 'outstanding';
   const key = x => mode === 'change' ? Math.abs(x.dOi || 0) : x.oi;
   const top = t => idx.map(i => one(i, t)).sort((a, b) => key(b) - key(a)).slice(0, n);
   const calls = top('CE'), puts = top('PE'), lead = [calls[0], puts[0]].filter(x => x && key(x) > 0);
@@ -907,6 +910,7 @@ async function refreshUnderlying(u, now) {
   if (!mch.future) for (const e of live) { const c = await chainFor(u, e); if (c.future) { monthly = e; mch = c; break; } }
   if (!mch.future) throw { code: 'no_future', message: 'Kite returned no futures contract for ' + u.label };
   const futExp = mch.future.expiry_date || monthly, futId = mch.future.id;
+  (S.futSym = S.futSym || {})[u.name] = futId; // the 1-minute spot call also quotes the futures for the Intraday tab
   // weekly = nearest live expiry, weekly2/weekly3 = the next two; monthly carries the future
   const exps = {}; ['weekly', 'weekly2', 'weekly3'].forEach((k, i) => { if (u.kinds.includes(k) && live[i]) exps[k] = live[i]; }); if (u.kinds.includes('monthly')) exps.monthly = monthly;
   const head = await kite({ mode: 'quote', instruments: [u.spot, VIX, futId] });
@@ -964,7 +968,7 @@ async function refreshUnderlying(u, now) {
     S.panels[key] = panel;
     dbSet('latest/' + key, panel);
   }
-  try { await refreshIntraday(u, now, head[futId]); } catch (e) { (S.intra[u.name] = S.intra[u.name] || {}).err = (e && (e.message || e.code)) || 'error'; }
+  await intradayStep(u, now, head[futId]);
 }
 
 async function refresh() {
@@ -1001,9 +1005,11 @@ async function refreshIntraday(u, now, futQ) {
   if (!futQ || now.dow === 0 || now.dow === 6 || now.hm < '09:15') return;
   const it = S.intra[u.name] = S.intra[u.name] || {}, dia = diaryOf(u.name, now);
   it.fut = { ltp: +futQ.last_price, oi: +futQ.oi || 0, vwap: +futQ.average_price || null, token: futQ.instrument_token };
-  if (it.fut.token && (!it.candlesMs || Date.now() - it.candlesMs > 14 * 60e3 || it.candlesDate !== now.date)) {
-    it.candles = bars15(await kiteTool('market', { mode: 'historical', instrument_token: it.fut.token, interval: '15minute', from_date: now.date + ' 09:15:00', to_date: now.date + ' 15:30:00', oi: true }), now);
-    it.candlesMs = Date.now(); it.candlesDate = now.date;
+  if (it.fut.token && (!it.candlesMs || Date.now() - it.candlesMs > 4.5 * 60e3 || it.candlesDate !== now.date)) {
+    try {
+      it.candles = bars15(await kiteTool('market', { mode: 'historical', instrument_token: it.fut.token, interval: '15minute', from_date: now.date + ' 09:15:00', to_date: now.date + ' 15:30:00', oi: true }), now);
+      it.candlesMs = Date.now(); it.candlesDate = now.date; it.barErr = null;
+    } catch (e) { it.barErr = (e && (e.message || e.code)) || 'error'; it.barErrMs = Date.now(); } // keep the last bars and carry on
   }
   const c = it.candles || [], panel = S.panels[`${u.name}-${u.kinds[0]}`], sg = panel && panel.signals;
   const walls = sg && sg.supports && sg.resistances && sg.supports[0] && sg.resistances[0] ? { support: sg.supports[0], resistance: sg.resistances[0] } : null;
@@ -1022,9 +1028,12 @@ async function refreshIntraday(u, now, futQ) {
     it.optTot = tot;
   }
   const vwap = it.fut.vwap || vwapOf(c), or = openingRange(c), H = S.hist[u.name], prevHLC = H && H.prevHLC;
-  const t = trendScore({ candles: c, vwap, walls, wallsOpen: dia.open && dia.open.walls, pcr, pcrOpen: dia.open && dia.open.pcr, vix, vixOpen: dia.open && dia.open.vix, price: it.fut.ltp });
+  // score on the completed bars plus the 15-minute bar now forming (from the live quote), so moves show within a minute
+  const lastC = c[c.length - 1], forming = lastC && it.fut.ltp > 0 && Date.now() >= lastC.ms + 15 * 60e3 ? { ms: lastC.ms + 15 * 60e3, open: lastC.close, high: Math.max(lastC.close, it.fut.ltp), low: Math.min(lastC.close, it.fut.ltp), close: it.fut.ltp, volume: 0, oi: it.fut.oi || lastC.oi, forming: true } : null;
+  it.forming = forming;
+  const t = trendScore({ candles: forming ? c.concat([forming]) : c, vwap, walls, wallsOpen: dia.open && dia.open.walls, pcr, pcrOpen: dia.open && dia.open.pcr, vix, vixOpen: dia.open && dia.open.vix, price: it.fut.ltp });
   it.trend = t; it.vwap = vwap; it.or = or; it.walls = walls; it.pcr = pcr; it.prevHLC = prevHLC; it.ms = Date.now();
-  it.tracker = trendTracker(it.tracker || (dia.flips.length ? { confirmed: dia.flips[dia.flips.length - 1].to, pending: null, since: dia.flips[dia.flips.length - 1].ms, flip: null } : null), t.label, Date.now());
+  it.tracker = trendTracker(it.tracker || (dia.flips.length ? { confirmed: dia.flips[dia.flips.length - 1].to, pending: null, since: dia.flips[dia.flips.length - 1].ms, flip: null } : null), t.label, Date.now(), 3 * 60e3);
   if (it.tracker.flip) {
     const f = { ...it.tracker.flip, score: t.score, reasons: t.parts.filter(p => p.v).map(p => p.why).slice(0, 4), price: it.fut.ltp };
     dia.flips.push(f); S.flipBanner = { idx: u.name, label: u.label, ...f }; dirty = true;
@@ -1130,7 +1139,9 @@ function keyBoard(now) {
     const flip = dia && dia.flips.length ? dia.flips[dia.flips.length - 1] : null, flipNew = flip && Date.now() - flip.ms < 30 * 60e3;
     const sh = it.shift;
     return `<div class="card kb"><div class="kb-h"><h3>${esc(u.label)}</h3><span class="pill ${TCLS[tr.confirmed]}" style="font-size:13px">${esc(tr.confirmed)} ${it.trend.score >= 0 ? '+' : ''}${it.trend.score.toFixed(1)}</span>
-        <small class="mut">${tr.pending ? 'turning ' + esc(tr.pending) + '?' : flip ? 'since ' + tlabel(flip.ms) : 'no flip today'}</small></div>
+        <small class="mut">${tr.pending ? 'turning ' + esc(tr.pending) + '?' : flip ? 'trend since ' + tlabel(flip.ms) : 'no flip today'} · updated ${new Date(it.ms).toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' })}</small></div>
+      ${it.err ? `<div class="banner bad" style="margin:6px 0">⚠ Intraday update failed at ${tlabel(it.errMs)}: ${esc(it.err)}. Showing the last good reading.</div>` : ''}
+      ${it.barErr ? `<div class="banner" style="margin:6px 0">⚠ 15-minute bars not refreshed (${esc(it.barErr)}); bars up to ${c.length ? tlabel(c[c.length - 1].ms + 15 * 60e3) : '—'}. Live price, VWAP and OI still update.</div>` : ''}
       ${flipNew ? `<div class="banner ${flip.to === 'Down' ? 'bad' : 'info'}" style="margin:6px 0">⚠ Trend change ${tlabel(flip.ms)}: ${esc(flip.from)} → <b>${esc(flip.to)}</b></div>` : ''}
       ${it.reversal ? `<div class="banner" style="margin:6px 0">Reversal watch: ${esc(it.reversal)}</div>` : ''}
       <div class="kb-g">
@@ -1148,7 +1159,7 @@ function activeTop() {
   return `<div class="grid">${UNDERLYINGS.map(u => { const it = S.intra[u.name], a = it && it.active, spot = (S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot;
     const chg = a && a.mode === 'change', base = S.diary[`${u.name}-${ist().date}`], bt = base && base.open && base.open.oi ? tlabel(base.open.oi.ms) : '09:30';
     return `<div class="card s6 acttop"><h3>${esc(u.label)}: ${chg ? `open-interest change since ${bt}` : 'outstanding open interest'}</h3>
-      <div class="sub" style="margin:0 0 6px">Strikes within ±1.5% of spot ${fmt(spot)}. <span style="color:var(--ce);font-weight:600">■ Calls</span> <span style="color:var(--pe);font-weight:600">■ Puts</span>; ${chg ? 'up = contracts added, down = closed; darker = top 3 changes' : 'no 09:30 baseline yet, so this shows open contracts, not their change; darker = top 3'}; dashed line = spot.</div>
+      <div class="sub" style="margin:0 0 6px">Strikes within ±1.5% of spot ${fmt(spot)}. <span style="color:var(--ce);font-weight:600">■ Calls</span> <span style="color:var(--pe);font-weight:600">■ Puts</span>; ${chg ? 'up = contracts added, down = closed; darker = top 3 changes' : base && base.open && base.open.oi ? `no change yet since the ${bt} baseline, so this shows open contracts; darker = top 3` : 'no 09:30 baseline yet, so this shows open contracts, not their change; darker = top 3'}; dashed line = spot.</div>
       ${a && a.strikes.length ? `<div class="chart-box"><canvas id="iact-${u.name}" role="img" aria-label="${esc(u.label)} call and put open interest ${chg ? 'change' : ''} by strike near spot"></canvas></div>` : '<p class="note" style="margin:0">Appears with the first option chain of the day.</p>'}</div>`; }).join('')}</div>`;
 }
 function intradayView() {
@@ -1293,7 +1304,8 @@ async function refreshSpots() {
   if (!S.mcp || S.spotBusy) return;
   S.spotBusy = true;
   try {
-    const q = await kite({ mode: 'quote', instruments: [...UNDERLYINGS.map(u => u.spot), VIX] });
+    const futs = Object.values(S.futSym || {});
+    const q = await kite({ mode: 'quote', instruments: [...UNDERLYINGS.map(u => u.spot), VIX, ...futs] });
     for (const u of UNDERLYINGS) {
       const r = q && q[u.spot]; if (!r || !(+r.last_price > 0)) continue;
       const t = S.indices[u.name] || { label: u.label };
@@ -1302,8 +1314,19 @@ async function refreshSpots() {
     const v = q && q[VIX]; if (v && +v.last_price > 0 && S.indices.NIFTY) S.indices.NIFTY.vix = +v.last_price;
     const ts = q && q[UNDERLYINGS[0].spot] && Date.parse(q[UNDERLYINGS[0].spot].timestamp);
     S.spotMs = Number.isFinite(ts) ? ts : Date.now(); S.spotErr = null;
+    // Intraday tab: re-score every minute from the live futures quote (chains and walls still come from the 5-minute refresh)
+    if (!S.busy) {
+      const now = ist();
+      for (const u of UNDERLYINGS) { const fq = S.futSym && q[S.futSym[u.name]]; if (fq) await intradayStep(u, now, fq); }
+      if (S.tab === 'intra') render();
+    }
   } catch (e) { S.spotErr = (e && (e.message || e.code)) || 'Kite error'; }
   finally { S.spotBusy = false; renderTicker(); }
+}
+async function intradayStep(u, now, fq) {
+  const it = S.intra[u.name] = S.intra[u.name] || {};
+  try { await refreshIntraday(u, now, fq); it.err = null; it.errMs = null; }
+  catch (e) { it.err = (e && (e.message || e.code)) || 'error'; it.errMs = Date.now(); }
 }
 function tradingDaysLeft(today, expiry) { let n = 0; const d = new Date(today + 'T00:00:00Z'), e = new Date(expiry + 'T00:00:00Z'); while (d < e) { d.setUTCDate(d.getUTCDate() + 1); const w = d.getUTCDay(); if (w > 0 && w < 6) n++; } return n; }
 // Every expiry of one index on a common level scale, so the term structure of the forecast is visible at a glance.

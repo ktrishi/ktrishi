@@ -65,6 +65,12 @@ Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked
 
 ## Intraday tab (trader's diary, today only)
 - It runs in the page while it is open and costs no tokens.
+- **Refresh:**
+  - **Every minute:** the spot call also quotes both futures, and the trend is re-scored from the live price, open interest and VWAP, plus the 15-minute bar still forming.
+  - **Every 5 minutes:** the completed 15-minute bars are re-fetched, and the chains and walls refresh.
+  - **Display:** each panel shows "updated HH:MM:SS".
+  - **Failures:** a failed bar fetch keeps the last bars and shows a ⚠ with the reason.
+- **Flips:** the new label must hold for two checks and at least 3 minutes. "Trend since" is the last flip time, not the last update.
 - **Every 15 minutes:** today's futures bars with open interest (Kite historical, `15minute`, `oi: true`). Each bar is labelled long build-up, short build-up, short covering or long unwinding.
 - **Trend score from −5 to +5:**
   - the live futures price against VWAP and against the opening range
