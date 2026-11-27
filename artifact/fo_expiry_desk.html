@@ -1116,10 +1116,10 @@ function keyBoard(now) {
         <small class="mut">${tr.pending ? 'turning ' + esc(tr.pending) + '?' : flip ? 'since ' + tlabel(flip.ms) : 'no flip today'} · ${new Date(it.ms).toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' })}</small></div>
       ${alert ? `<div class="kb-alert ${it.err || (flipNew && flip.to === 'Down') ? 'bad' : flipNew ? 'info' : ''}">${alert}</div>` : ''}
       <div class="kb-g">
-        ${tile('vs VWAP', dVw == null ? '—' : `${dVw >= 0 ? '+' : ''}${dVw.toFixed(2)}%`, `${fmt(vwNow)} ${vwD == null ? '' : `${arrowOf(vwD)} ${Math.abs(vwD) < 1 ? 'flat' : (vwD >= 0 ? '+' : '') + fmt(vwD)} /30m`}`)}
-        ${tile('Walls S / R', w ? `${fmt(w.support)}${wd(w.support, w0 && w0.support)} / ${fmt(w.resistance)}${wd(w.resistance, w0 && w0.resistance)}` : '—', w0 ? `09:30: ${fmt(w0.support)} / ${fmt(w0.resistance)}` : '')}
         ${tile('Option writing', sh ? `<span class="${sh.tilt === 'bullish' ? 'up' : sh.tilt === 'bearish' ? 'dn' : ''}">${sh.tilt === 'bullish' ? 'Puts' : sh.tilt === 'bearish' ? 'Calls' : 'Balanced'}</span>` : '—', sh ? `C ${fmtQ(sh.ceAdd)} · P ${fmtQ(sh.peAdd)}` : '')}
         ${tile('Futures today', dP == null ? '—' : `${dP >= 0 ? '+' : ''}${dP.toFixed(2)}%`, `OI ${dOi == null ? '—' : (dOi >= 0 ? '+' : '') + dOi.toFixed(1) + '%'} · ${BSHORT[dayB]}`)}
+        ${tile('vs VWAP', dVw == null ? '—' : `${dVw >= 0 ? '+' : ''}${dVw.toFixed(2)}%`, `${fmt(vwNow)} ${vwD == null ? '' : `${arrowOf(vwD)} ${Math.abs(vwD) < 1 ? 'flat' : (vwD >= 0 ? '+' : '') + fmt(vwD)} /30m`}`)}
+        ${tile('Walls S / R', w ? `${fmt(w.support)}${wd(w.support, w0 && w0.support)} / ${fmt(w.resistance)}${wd(w.resistance, w0 && w0.resistance)}` : '—', w0 ? `09:30: ${fmt(w0.support)} / ${fmt(w0.resistance)}` : '')}
       </div>
       ${dia && dia.bias ? `<div class="kb-alert">Tomorrow: <b>${dia.bias.label}</b>. ${esc(dia.bias.reasons.slice(0, 2).join('; '))}.</div>` : ''}</div>`;
   }).join('');

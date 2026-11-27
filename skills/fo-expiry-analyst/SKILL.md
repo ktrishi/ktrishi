@@ -97,7 +97,7 @@ Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked
   Call buying, call short covering, put writing and put unwinding lean bullish; the opposites lean bearish.
 - **Layout (compact):**
   1. The OI-change graphs, Nifty and Bank Nifty side by side.
-  2. The key board: per index, trend and score, last flip and update time, one alert line, and 4 tiles (vs VWAP with its 30-minute drift, walls S/R against 09:30, option writing, futures today), plus a slim India VIX line.
+  2. The key board: per index, trend and score, last flip and update time, one alert line, and 4 tiles in this order: option writing, futures today, vs VWAP (with its 30-minute drift), walls S/R against 09:30, plus a slim India VIX line.
   3. Positions.
   4. Per-index **details, collapsed by default:** the trend reasons, the last 8 build-up bars, the 3 nearest levels above and below, the futures chart, the top-3 options table, calls vs puts through the day with PCR, any signals, and the last 6 diary rows.
 
