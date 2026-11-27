@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F&amp;O Expiry Dashboard</title>
+<style>
+:root {
+  --bg: #f4f4f2; --surface: #fcfcfb; --border: #e2e1dc; --grid: #ecebe7;
+  --text: #0b0b0b; --text-2: #52514e; --text-3: #7a7974;
+  --ce: #2a78d6; --pe: #eb6834; --band: rgba(42,120,214,.16); --fwd: #7a7974;
+  --ok: #0ca30c; --bad: #c8302f; --bad-bg: #fbeaea; --warn-bg: #fff4dc;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121211; --surface: #1a1a19; --border: #2e2e2b; --grid: #262624;
+  --text: #f0efec; --text-2: #c3c2b7; --text-3: #94938b;
+  --ce: #3987e5; --pe: #d95926; --band: rgba(57,135,229,.22); --fwd: #94938b;
+  --ok: #0ca30c; --bad: #e66767; --bad-bg: #3a1d1d; --warn-bg: #3a3020;
+}}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
+  padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+header h1 { font-size: 15px; margin: 0 12px 0 0; }
+header .pill { color: var(--text-2); }
+header.alert { background: var(--bad-bg); border-bottom-color: var(--bad); }
+header.alert .pill.state { color: var(--bad); font-weight: 600; }
+.btn { display: none; padding: 6px 12px; border-radius: 6px; background: var(--ce); color: #fff; text-decoration: none; font-weight: 600; }
+header.login .btn { display: inline-block; }
+main { padding: 16px; max-width: 1500px; margin: 0 auto; }
+.panels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 1100px) { .panels { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.card h2 { font-size: 15px; margin: 0; } .sub { color: var(--text-2); font-size: 13px; }
+.quote { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.headline { margin: 10px 0 4px; } .headline .lbl { color: var(--text-2); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.centre { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.range { font-variant-numeric: tabular-nums; color: var(--text); } .range span { color: var(--text-2); }
+.note { margin-top: 6px; padding: 4px 8px; border-radius: 6px; background: var(--warn-bg); color: var(--text); font-size: 12px; display: inline-block; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 10px 0; font-variant-numeric: tabular-nums; }
+dt { color: var(--text-2); } dd { margin: 0; }
+.chart { position: relative; height: 210px; margin-top: 10px; }
+.chart-head { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; color: var(--text-2); font-size: 12px; }
+.toggle button { font: inherit; font-size: 12px; padding: 2px 8px; border: 1px solid var(--border); background: transparent; color: var(--text-2); border-radius: 5px; cursor: pointer; }
+.toggle button.on { color: var(--text); border-color: var(--text-3); }
+.log { margin-top: 10px; font-size: 12.5px; max-height: 150px; overflow: auto; }
+.log div { padding: 3px 0; border-top: 1px solid var(--grid); }
+.log b { font-variant-numeric: tabular-nums; }
+.chg { color: var(--text); font-weight: 600; }
+h3 { font-size: 14px; margin: 22px 0 8px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 13px; }
+th, td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; } th { color: var(--text-2); font-weight: 500; }
+.tablewrap { overflow-x: auto; }
+.bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+@media (max-width: 1100px) { .bottom { grid-template-columns: 1fr; } }
+.verdict { font-weight: 600; } .muted { color: var(--text-3); }
+footer { color: var(--text-3); font-size: 12px; padding: 8px 16px 24px; text-align: center; }
+</style>
+</head>
+<body>
+<header id="status">
+  <h1>F&amp;O Expiry Dashboard</h1>
+  <span class="pill state" id="st-login">Connecting…</span>
+  <span class="pill" id="st-data"></span>
+  <span class="pill" id="st-next"></span>
+  <span class="pill" id="st-cal"></span>
+  <a class="btn" href="/kite/login">Log in to Kite</a>
+</header>
+<main>
+  <div class="panels" id="panels"></div>
+  <div class="bottom">
+    <section class="card"><h3 style="margin-top:0">Track record (locked predictions vs settlement)</h3><div class="tablewrap" id="track"></div></section>
+    <section class="card"><h3 style="margin-top:0">Signal weights in use</h3><div class="tablewrap" id="weights"></div>
+      <h3>Gaps today</h3><div id="gaps" class="sub"></div></section>
+  </div>
+</main>
+<footer>Read-only. Personal use. Predictions are ranges, not targets: the 68% band should contain the settlement about two times in three.</footer>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
