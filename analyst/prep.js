@@ -152,6 +152,8 @@ function quietCmd(o) {
   if (!latest.spots) return run('the morning lock did not record spots');
   const soon = Object.values(latest.overlays || {}).map(o => o.expiry).filter(Boolean).filter(e => eng.isLive(e, now) && eng.tradingDaysFrac(nowMs, e) <= 1.5);
   if (soon.length) return run(`expiry due ${[...new Set(soon)].join(', ')}: the last lock before settlement matters`);
+  const today = (latest.events || []).filter(e => e.impact === 'high' && String(e.when || '').slice(0, 10) === now.date);
+  if (today.length) return run(`high-impact event today (${today[0].title})`);
   const moves = [];
   for (const [name, s0] of Object.entries(latest.spots)) {
     const s1 = +spot[name]; if (!(s1 > 0 && s0 > 0)) return run(`no current spot for ${name}`);

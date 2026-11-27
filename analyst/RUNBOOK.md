@@ -41,7 +41,7 @@ On a Saturday or Sunday, stop and reply `F&O <slot>: weekend, nothing run.`
    ```
 4. **Act on the result:**
    - **`QUIET …`:** write nothing and stop. Reply with the single line `F&O 14:45 skipped: quiet market (<the QUIET text>). Morning locks stand.`
-     - The check only skips when both indices have moved less than 0.5% and VIX less than 10% since 09:40, and no expiry is due today or on the next session.
+     - The check only skips when both indices have moved less than 0.5% and VIX less than 10% since 09:40, no expiry is due today or on the next session, and no high-impact event falls today.
    - **`RUN …`:** carry on with step 1, but skip the three calls you have already made. Mention the RUN reason in the phone line.
 
 ## 1. Read everything (one message, all calls in parallel)

@@ -107,6 +107,7 @@ test('afternoon quiet check: skip only when nothing moved and no expiry is due',
   assert.match(q(base, 'NIFTY=26010,BANKNIFTY=64000', 17), /^RUN NIFTY moved 0\.52%/);
   assert.match(q(base, 'NIFTY=25875,BANKNIFTY=64000', 19), /^RUN VIX moved/);
   assert.match(q({ ...base, spots: undefined }, 'NIFTY=25875,BANKNIFTY=64000', 17), /^RUN the morning lock did not record spots/);
+  assert.match(q({ ...base, events: [{ title: 'RBI policy', when: '2026-11-27', impact: 'high' }] }, 'NIFTY=25875,BANKNIFTY=64000', 17), /^RUN high-impact event today \(RBI policy\)/);
   assert.match(q({ ...base, runMs: morning - 864e5 }, 'NIFTY=25875,BANKNIFTY=64000', 17), /^RUN no 09:40 lock today/);
   // Monday 30-Nov afternoon: the 1-Dec weekly expires on the next session
   const mon = Date.UTC(2026, 10, 30, 9, 15);
