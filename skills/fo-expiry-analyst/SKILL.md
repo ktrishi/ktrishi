@@ -34,6 +34,7 @@ Rishi is a senior private banker. He wants blunt, risk-first analysis: start eve
 | `config/model` | Applied model settings | Analyst |
 | `trades/*` | One paper trade per contract each morning: verdict, best condor and strangle, fair volatility, regime | Analyst (09:40 only, never rewritten) |
 | `tradescores/*` | Paper-trade profit or loss at settlement, after costs; `taken` = the verdict was not NO TRADE | Analyst |
+| `diary/<IDX>-<date>` | Intraday trader's diary for the day: the 09:30 open baseline, snapshots every 30 minutes, trend flips, unproven signals with their +30/+60-minute paper results, and the tomorrow bias | Page (Intraday tab) |
 | `runs/*` | Run log | Analyst |
 
 Only the analyst writes locks, outcomes, scores, post-mortems, weights and config.
@@ -61,6 +62,23 @@ Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked
 - **Event dates.** Confirm every high- or medium-impact event date on the official source (MoSPI, RBI, BLS, BEA, the Fed, exchange filings) before listing it. Mark anything you cannot confirm "(date unconfirmed)" and treat it as one impact level lower.
 - **Centre.** Leave the nudge at 0 unless you have clear directional evidence that prices have not absorbed.
 - **Every lock is scored three ways:** the model, the model plus overlay, and the futures-implied level. If the overlay stops adding value, the analyst proposes removing it. That is the point of the design.
+
+## Intraday tab (trader's diary, today only)
+- It runs in the page while it is open and costs no tokens.
+- **Every 15 minutes:** today's futures bars with open interest (Kite historical, `15minute`, `oi: true`). Each bar is labelled long build-up, short build-up, short covering or long unwinding.
+- **Trend score from −5 to +5:**
+  - the live futures price against VWAP and against the opening range
+  - higher-high or lower-low structure
+  - the last hour's build-up
+  - the option open-interest walls shifting since 09:30
+  - the put/call ratio change
+  - VIX against price
+
+  The label is Up, Down or Sideways. A **flip** needs two 5-minute checks in a row, then shows a page-wide banner for 30 minutes.
+- **Opportunity lines are unproven.** One appears only when the confirmed trend and a fresh break of the opening range or the previous day's high/low agree, with matching build-up and the right side of VWAP. It fires 09:30–14:45, at most once per index per hour, and is scored on paper at +30 and +60 minutes.
+  - When asked about one, quote the running hit rate.
+  - Never present a signal as a recommendation.
+- **Rishi's positions** come from Kite `portfolio` (`mode: "positions"`, net view), shown live with each strike's distance from spot. A **breach** is a short strike within 0.5% of spot or beyond it. Positions are never stored.
 
 ## Trade bands (Today, Iron condor, Short strangle, Range view tabs)
 - **What it is.** An expected-value test of selling a range.
