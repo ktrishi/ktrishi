@@ -95,10 +95,13 @@ Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked
   - **Short covering** (price up) or **unwinding** (price down): OI down.
 
   Call buying, call short covering, put writing and put unwinding lean bullish; the opposites lean bearish.
-- **Layout:**
-  - **Top of the tab:** the graphs, Nifty and Bank Nifty side by side. Bars show OI change per strike (up = added, down = closed), with the top 3 darker and a dashed spot line.
-  - **Each index's detail section:** the verdict and the top-3 table, plus the total call/put OI change and put/call ratio through the day.
-  - **Key board:** trend, VWAP drift, wall moves, VIX, option tilt and the futures build-up.
+- **Layout (compact):**
+  1. The OI-change graphs, Nifty and Bank Nifty side by side.
+  2. The key board: per index, trend and score, last flip and update time, one alert line, and 4 tiles (vs VWAP with its 30-minute drift, walls S/R against 09:30, option writing, futures today), plus a slim India VIX line.
+  3. Positions.
+  4. Per-index **details, collapsed by default:** the trend reasons, the last 8 build-up bars, the 3 nearest levels above and below, the futures chart, the top-3 options table, calls vs puts through the day with PCR, any signals, and the last 6 diary rows.
+
+  The tomorrow bias appears on the key board only after 15:25.
 - **Rishi's positions** come from Kite `portfolio` (`mode: "positions"`, net view), shown live with each strike's distance from spot. A **breach** is a short strike within 0.5% of spot or beyond it. Positions are never stored.
 
 ## Trade bands (Today, Iron condor, Short strangle, Range view tabs)

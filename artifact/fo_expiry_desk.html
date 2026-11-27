@@ -161,13 +161,17 @@ tr.hl td { background: var(--surface2); font-weight: 600; }
 .nc { text-transform: none; }
 .kbs > .kb { grid-column: span 6; } @media (max-width: 900px) { .kbs > .kb { grid-column: 1 / -1; } }
 .kb-h { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; } .kb-h h3 { margin: 0; }
-.kb-g { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; } @media (max-width: 520px) { .kb-g { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kb-g { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 8px; } @media (max-width: 1100px) and (min-width: 901px), (max-width: 560px) { .kb-g { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .kb-t { background: var(--surface2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; }
 .kb-t .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; } .kb-t .v { font: 600 17px/1.3 var(--serif); margin-top: 2px; } .kb-t .v small { font: 400 11.5px var(--sans); }
 .kb-t .d { font-size: 12px; color: var(--muted); margin-top: 2px; } .kb-t .d .pill { text-transform: none; letter-spacing: 0; }
-.intra { margin-top: 14px; } .chart-box.tall { height: 340px; } .intra h3 small { font-weight: 400; font-size: 12px; }
-.intra .why { margin: 8px 0; padding-left: 0; list-style: none; columns: 2 300px; font-size: 13px; } .intra .why li { margin: 2px 0; }
-.intra .strip { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; } .intra .strip .pill { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.intra { margin-top: 14px; } .chart-box.tall { height: 340px; } .chart-box.short { height: 210px; }
+.kb-alert { margin: 6px 0 0; padding: 5px 9px; border-radius: 8px; font-size: 12.5px; background: var(--surface2); border-left: 3px solid var(--warn); } .kb-alert.bad { border-left-color: var(--bad); } .kb-alert.info { border-left-color: var(--info); }
+.kb-strip, .kb-key { margin-top: 8px; font-size: 12.5px; color: var(--muted); } .kb-strip b { color: var(--ink); }
+.det { margin-top: 12px; } .det summary { cursor: pointer; list-style: none; } .det summary::-webkit-details-marker { display: none; } .det summary::before { content: '▸ '; color: var(--muted); } .det[open] summary::before { content: '▾ '; }
+table.compact td, table.compact th { padding-top: 5px; padding-bottom: 5px; } .intra h3 small { font-weight: 400; font-size: 12px; }
+.intra .why, .det .why { margin: 8px 0; padding-left: 0; list-style: none; columns: 2 300px; font-size: 13px; } .intra .why li, .det .why li { margin: 2px 0; }
+.intra .strip, .det .strip { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; } .intra .strip .pill, .det .strip .pill { text-transform: none; letter-spacing: 0; font-weight: 500; }
 .tdrow { display: grid; grid-template-columns: 230px 170px minmax(0, 1fr); gap: 6px 16px; padding: 11px 0; border-top: 1px solid var(--line); align-items: start; }
 .tdrow small { display: block; font-size: 12px; margin-top: 3px; }
 @media (max-width: 720px) { .tdrow { grid-template-columns: minmax(0, 1fr) auto; } .tdw { grid-column: 1 / -1; } }
@@ -1078,122 +1082,82 @@ function positionsCard(now) {
     ${r.rows.sort((a, b) => a.pnl - b.pnl).map(x => `<tr${x.breach ? ' class="hl"' : ''}><td class="nw">${esc(x.symbol)}</td><td class="r nw ${x.pnl >= 0 ? 'up' : 'dn'}">${rup(x.pnl)}</td><td class="r">${x.distPct == null ? '—' : (x.distPct >= 0 ? '+' : '') + x.distPct.toFixed(2) + '%'}</td><td>${x.breach ? '<span class="pill p-bad">Breach</span>' : ''}</td><td class="r">${x.qty > 0 ? '+' : ''}${x.qty}</td><td class="r">${(+x.avg).toFixed(2)}</td><td class="r">${(+x.ltp).toFixed(2)}</td></tr>`).join('')}
     </tbody></table></div></div>`;
 }
+// nearest three levels above and below the futures price
 function intraLevels(it, spot) {
   const pv = pivots(it.prevHLC), L = [];
-  if (pv) L.push(['R2', pv.R2], ['R1', pv.R1], ['Previous high', pv.H], ['Pivot', pv.P], ['Previous low', pv.L], ['S1', pv.S1], ['S2', pv.S2]);
-  if (it.or) L.push(['Opening-range high', it.or.high], ['Opening-range low', it.or.low]);
+  if (pv) L.push(['R2', pv.R2], ['R1', pv.R1], ['Prev high', pv.H], ['Pivot', pv.P], ['Prev low', pv.L], ['S1', pv.S1], ['S2', pv.S2]);
+  if (it.or) L.push(['OR high', it.or.high], ['OR low', it.or.low]);
   if (it.vwap) L.push(['VWAP', it.vwap]);
-  if (it.walls) L.push(['Call wall (resistance)', it.walls.resistance], ['Put wall (support)', it.walls.support]);
-  const rows = L.filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
-  let placed = false; const out = [];
-  for (const [n, v] of rows) {
-    if (!placed && spot && v < spot) { out.push(`<tr class="hl"><td>Futures now</td><td class="r">${fmt(spot)}</td><td class="r">—</td></tr>`); placed = true; }
-    out.push(`<tr><td>${esc(n)}</td><td class="r">${fmt(v)}</td><td class="r">${spot ? ((v / spot - 1) * 100).toFixed(2) + '%' : '—'}</td></tr>`);
-  }
-  if (!placed && spot) out.push(`<tr class="hl"><td>Futures now</td><td class="r">${fmt(spot)}</td><td class="r">—</td></tr>`);
-  return `<div class="tw"><table><thead><tr><th>Level</th><th class="r">Value</th><th class="r">From futures</th></tr></thead><tbody>${out.join('')}</tbody></table></div>`;
+  if (it.walls) L.push(['Call wall', it.walls.resistance], ['Put wall', it.walls.support]);
+  const ok = L.filter(x => x[1] > 0), above = ok.filter(x => x[1] >= spot).sort((a, b) => a[1] - b[1]).slice(0, 3).reverse(), below = ok.filter(x => x[1] < spot).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const row = ([n, v]) => `<tr><td>${esc(n)}</td><td class="r">${fmt(v)}</td><td class="r mut">${((v / spot - 1) * 100).toFixed(2)}%</td></tr>`;
+  return `<div class="tw"><table class="compact"><tbody>${above.map(row).join('')}<tr class="hl"><td>Futures</td><td class="r">${fmt(spot)}</td><td></td></tr>${below.map(row).join('')}</tbody></table></div>`;
 }
 function signalStats() {
   const all = Object.values(S.diary).flatMap(d => d.signals || []).filter(s => s.result && s.result.at60 != null);
   const win = all.filter(s => !s.result.stopped && s.result.at60 > 0).length;
   return { n: all.length, win, pts: all.reduce((a, s) => a + (s.result.stopped ? -Math.abs(s.entry - s.stop) : s.result.at60), 0) };
 }
-function activeBlock(u, it) {
-  const a = it.active; if (!a || !a.strikes.length) return '';
-  const VC = { bullish: 'up', bearish: 'dn' };
-  const vq = v => v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? Math.round(v / 1e3) + 'K' : String(v);
-  const row = x => `<tr><td class="nw"><b>${fmt(x.strike)}</b> ${x.type}</td><td>${x.read ? `<span class="${VC[x.view] || 'mut'}">${esc(x.read)}</span>` : '<span class="mut">—</span>'}</td><td class="r nw">${x.ltp.toFixed(1)}${x.dLtpPct == null ? '' : ` <small class="${x.dLtpPct >= 0 ? 'up' : 'dn'}">${x.dLtpPct >= 0 ? '+' : ''}${x.dLtpPct.toFixed(0)}%</small>`}</td><td class="r">${vq(x.oi)}</td><td class="r">${x.dOi == null ? '—' : fmtQ(x.dOi)}</td></tr>`;
-  return `<h4 style="margin:16px 0 6px">${a.mode === 'change' ? 'Biggest open-interest changes near spot' : 'Largest open interest near spot'} <small class="mut">strikes within ±1.5% of ${fmt((S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot)}</small></h4>
-    <div class="banner ${a.view === 'bearish' ? 'bad' : a.view === 'bullish' ? 'info' : ''}" style="margin:0 0 10px">${esc(a.text)}.</div>
-    <div><div class="tw"><table><thead><tr><th>Option</th><th>Read</th><th class="r">Price (vs 09:30)</th><th class="r">Open interest</th><th class="r">OI change</th></tr></thead><tbody>
-        <tr><td colspan="5" class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Top calls</td></tr>${a.calls.map(row).join('')}
-        <tr><td colspan="5" class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Top puts</td></tr>${a.puts.map(row).join('')}
-      </tbody></table></div><p class="note" style="margin:6px 0 0">Graph at the top of this tab. Read: price and open interest both up = buying; price down with open interest up = writing; open interest falling = covering or unwinding. Calls bought or puts written lean bullish; calls written or puts bought lean bearish.</p></div>`;
-}
-function optionChangeBlock(u, it, dia) {
-  const base = dia && dia.open && dia.open.oi;
-  if (!it.chain) return '';
-  if (!base || !it.shift) return `<h4 style="margin:16px 0 6px">Option open interest: calls vs puts</h4><p class="note" style="margin:0">Starts from the first check after 09:30 with this page open: that chain becomes the baseline, and every later check shows where calls and puts were added or cut.</p>`;
-  const sh = it.shift, cls = sh.tilt === 'bearish' ? 'bad' : sh.tilt === 'bullish' ? 'info' : '';
-  return `<h4 style="margin:16px 0 6px">Option open interest since ${tlabel(base.ms)} <small class="mut">${esc(u.label)} ${dlabel(base.expiry)} expiry, strikes within ±3%</small></h4>
-    <div class="banner ${cls}" style="margin:0 0 10px">${esc(sh.text)}.${sh.putWalls.length && sh.tilt !== 'bullish' ? ` Put writing below spot at ${sh.putWalls.map(fmt).join(' / ')}.` : ''}${sh.callWalls.length && sh.tilt !== 'bearish' ? ` Call writing above spot at ${sh.callWalls.map(fmt).join(' / ')}.` : ''}</div>
-    <div><div class="sub" style="margin:0 0 4px">Total change through the day, and the put/call ratio (by strike: the graphs at the top of this tab)</div><div class="chart-box"><canvas id="ipcr-${u.name}" role="img" aria-label="${esc(u.label)} total call and put open interest change and put/call ratio through the day"></canvas></div></div>`;
-}
-// Key signals first: one compact panel per index, the reads a trader checks every few minutes.
+const arrowOf = d => d > 0 ? '<span class="up">▲</span>' : d < 0 ? '<span class="dn">▼</span>' : '';
 function keyBoard(now) {
-  const arrow = d => d > 0 ? '<span class="up">▲</span>' : d < 0 ? '<span class="dn">▼</span>' : '<span class="mut">•</span>';
-  const tile = (l, v, d) => `<div class="kb-t"><div class="l">${l}</div><div class="v">${v}</div><div class="d">${d}</div></div>`;
+  const tile = (l, v, d) => `<div class="kb-t"><div class="l">${l}</div><div class="v">${v}</div>${d ? `<div class="d">${d}</div>` : ''}</div>`;
   const panels = UNDERLYINGS.map(u => {
     const it = S.intra[u.name], dia = S.diary[`${u.name}-${now.date}`];
-    if (!it || !it.trend) return `<div class="card kb"><h3>${esc(u.label)}</h3><p class="note" style="margin:0">Waiting for today’s first futures bars.</p></div>`;
+    if (!it || !it.trend) return `<div class="card kb"><h3>${esc(u.label)}</h3><p class="note" style="margin:0">${now.dow === 0 || now.dow === 6 ? 'Market closed.' : 'Waiting for today’s first futures bars.'}</p></div>`;
     const tr = it.tracker || { confirmed: it.trend.label }, px = it.fut.ltp, c = it.candles || [], open = dia && dia.open;
-    // VWAP drift over the last 30 minutes, from the 15-minute bars
     let pv = 0, vv = 0; const vw = c.map(b => { pv += (b.high + b.low + b.close) / 3 * b.volume; vv += b.volume; return vv ? pv / vv : null; });
-    const vwNow = it.vwap, vwPrev = vw.length > 2 ? vw[vw.length - 3] : null, vwD = vwNow && vwPrev ? vwNow - vwPrev : null;
-    const dVw = vwNow ? (px / vwNow - 1) * 100 : null;
-    const w = it.walls, w0 = open && open.walls;
-    const wall = (now1, then1) => now1 ? `${fmt(now1)} ${then1 && then1 !== now1 ? `${arrow(now1 - then1)} <small class="mut">from ${fmt(then1)}</small>` : '<small class="mut">unchanged since 09:30</small>'}` : '—';
-    const vix = (S.indices.NIFTY || {}).vix, vix0 = open && open.vix, dv = vix && vix0 ? (vix / vix0 - 1) * 100 : null;
+    const vwNow = it.vwap, vwPrev = vw.length > 2 ? vw[vw.length - 3] : null, vwD = vwNow && vwPrev ? vwNow - vwPrev : null, dVw = vwNow ? (px / vwNow - 1) * 100 : null;
+    const w = it.walls, w0 = open && open.walls, wd = (a, b) => a && b && a !== b ? arrowOf(a - b) : '';
     const first = c[0], dayB = first ? buildupOf({ close: first.open, oi: first.oi }, { close: px, oi: it.fut.oi }) : 'neutral';
     const dP = first ? (px / first.open - 1) * 100 : null, dOi = first && first.oi ? (it.fut.oi / first.oi - 1) * 100 : null;
-    const flip = dia && dia.flips.length ? dia.flips[dia.flips.length - 1] : null, flipNew = flip && Date.now() - flip.ms < 30 * 60e3;
-    const sh = it.shift;
+    const flip = dia && dia.flips.length ? dia.flips[dia.flips.length - 1] : null, flipNew = flip && Date.now() - flip.ms < 30 * 60e3, sh = it.shift;
+    const alert = it.err ? `⚠ Update failed ${tlabel(it.errMs)}: ${esc(it.err)}` : flipNew ? `⚠ Trend change ${tlabel(flip.ms)}: ${esc(flip.from)} → <b>${esc(flip.to)}</b>` : it.reversal ? `Reversal watch: ${esc(it.reversal)}` : it.barErr ? `⚠ Bars not refreshed (${esc(it.barErr)}); live values still update` : '';
     return `<div class="card kb"><div class="kb-h"><h3>${esc(u.label)}</h3><span class="pill ${TCLS[tr.confirmed]}" style="font-size:13px">${esc(tr.confirmed)} ${it.trend.score >= 0 ? '+' : ''}${it.trend.score.toFixed(1)}</span>
-        <small class="mut">${tr.pending ? 'turning ' + esc(tr.pending) + '?' : flip ? 'trend since ' + tlabel(flip.ms) : 'no flip today'} · updated ${new Date(it.ms).toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' })}</small></div>
-      ${it.err ? `<div class="banner bad" style="margin:6px 0">⚠ Intraday update failed at ${tlabel(it.errMs)}: ${esc(it.err)}. Showing the last good reading.</div>` : ''}
-      ${it.barErr ? `<div class="banner" style="margin:6px 0">⚠ 15-minute bars not refreshed (${esc(it.barErr)}); bars up to ${c.length ? tlabel(c[c.length - 1].ms + 15 * 60e3) : '—'}. Live price, VWAP and OI still update.</div>` : ''}
-      ${flipNew ? `<div class="banner ${flip.to === 'Down' ? 'bad' : 'info'}" style="margin:6px 0">⚠ Trend change ${tlabel(flip.ms)}: ${esc(flip.from)} → <b>${esc(flip.to)}</b></div>` : ''}
-      ${it.reversal ? `<div class="banner" style="margin:6px 0">Reversal watch: ${esc(it.reversal)}</div>` : ''}
+        <small class="mut">${tr.pending ? 'turning ' + esc(tr.pending) + '?' : flip ? 'since ' + tlabel(flip.ms) : 'no flip today'} · ${new Date(it.ms).toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' })}</small></div>
+      ${alert ? `<div class="kb-alert ${it.err || (flipNew && flip.to === 'Down') ? 'bad' : flipNew ? 'info' : ''}">${alert}</div>` : ''}
       <div class="kb-g">
-        ${tile('Futures vs VWAP', dVw == null ? '—' : `${dVw >= 0 ? '+' : ''}${dVw.toFixed(2)}%`, `VWAP ${fmt(vwNow)}${vwD == null ? '' : ` ${arrow(vwD)} ${vwD >= 0 ? '+' : ''}${fmt(vwD)} in 30 min`}`)}
-        ${tile('Support (put wall)', wall(w && w.support, w0 && w0.support), '')}
-        ${tile('Resistance (call wall)', wall(w && w.resistance, w0 && w0.resistance), '')}
-        ${tile('India VIX', vix ? vix.toFixed(2) : '—', dv == null ? 'vs 09:30: —' : `${arrow(dv)} ${dv >= 0 ? '+' : ''}${dv.toFixed(1)}% vs 09:30 (${(+vix0).toFixed(2)})`)}
-        ${tile('Option writing since 09:30', sh ? `<span class="${sh.tilt === 'bullish' ? 'up' : sh.tilt === 'bearish' ? 'dn' : ''}">${sh.tilt === 'bullish' ? 'Puts dominant' : sh.tilt === 'bearish' ? 'Calls dominant' : 'Balanced'}</span>` : '—', sh ? `calls ${fmtQ(sh.ceAdd)} · puts ${fmtQ(sh.peAdd)}` : 'from the first check after 09:30')}
-        ${tile('Futures today', dP == null ? '—' : `${dP >= 0 ? '+' : ''}${dP.toFixed(2)}%`, `OI ${dOi == null ? '—' : (dOi >= 0 ? '+' : '') + dOi.toFixed(1) + '%'} · <span class="pill ${BCLS[dayB]}">${BSHORT[dayB]}</span>`)}
-      </div></div>`;
+        ${tile('vs VWAP', dVw == null ? '—' : `${dVw >= 0 ? '+' : ''}${dVw.toFixed(2)}%`, `${fmt(vwNow)} ${vwD == null ? '' : `${arrowOf(vwD)} ${Math.abs(vwD) < 1 ? 'flat' : (vwD >= 0 ? '+' : '') + fmt(vwD)} /30m`}`)}
+        ${tile('Walls S / R', w ? `${fmt(w.support)}${wd(w.support, w0 && w0.support)} / ${fmt(w.resistance)}${wd(w.resistance, w0 && w0.resistance)}` : '—', w0 ? `09:30: ${fmt(w0.support)} / ${fmt(w0.resistance)}` : '')}
+        ${tile('Option writing', sh ? `<span class="${sh.tilt === 'bullish' ? 'up' : sh.tilt === 'bearish' ? 'dn' : ''}">${sh.tilt === 'bullish' ? 'Puts' : sh.tilt === 'bearish' ? 'Calls' : 'Balanced'}</span>` : '—', sh ? `C ${fmtQ(sh.ceAdd)} · P ${fmtQ(sh.peAdd)}` : '')}
+        ${tile('Futures today', dP == null ? '—' : `${dP >= 0 ? '+' : ''}${dP.toFixed(2)}%`, `OI ${dOi == null ? '—' : (dOi >= 0 ? '+' : '') + dOi.toFixed(1) + '%'} · ${BSHORT[dayB]}`)}
+      </div>
+      ${dia && dia.bias ? `<div class="kb-alert">Tomorrow: <b>${dia.bias.label}</b>. ${esc(dia.bias.reasons.slice(0, 2).join('; '))}.</div>` : ''}</div>`;
   }).join('');
-  return `<div class="grid kbs">${panels}</div>`;
+  const vix = (S.indices.NIFTY || {}).vix, d0 = S.diary[`NIFTY-${now.date}`], vix0 = d0 && d0.open && d0.open.vix, dv = vix && vix0 ? (vix / vix0 - 1) * 100 : null;
+  return `<div class="grid kbs">${panels}</div>${vix ? `<div class="kb-strip">India VIX <b>${vix.toFixed(2)}</b>${dv == null ? '' : ` ${arrowOf(dv)} ${dv >= 0 ? '+' : ''}${dv.toFixed(1)}% since 09:30`}</div>` : ''}`;
 }
 function activeTop() {
   return `<div class="grid">${UNDERLYINGS.map(u => { const it = S.intra[u.name], a = it && it.active, spot = (S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot;
-    const chg = a && a.mode === 'change', base = S.diary[`${u.name}-${ist().date}`], bt = base && base.open && base.open.oi ? tlabel(base.open.oi.ms) : '09:30';
-    return `<div class="card s6 acttop"><h3>${esc(u.label)}: ${chg ? `open-interest change since ${bt}` : 'outstanding open interest'}</h3>
-      <div class="sub" style="margin:0 0 6px">Strikes within ±1.5% of spot ${fmt(spot)}. <span style="color:var(--ce);font-weight:600">■ Calls</span> <span style="color:var(--pe);font-weight:600">■ Puts</span>; ${chg ? 'up = contracts added, down = closed; darker = top 3 changes' : base && base.open && base.open.oi ? `no change yet since the ${bt} baseline, so this shows open contracts; darker = top 3` : 'no 09:30 baseline yet, so this shows open contracts, not their change; darker = top 3'}; dashed line = spot.</div>
-      ${a && a.strikes.length ? `<div class="chart-box"><canvas id="iact-${u.name}" role="img" aria-label="${esc(u.label)} call and put open interest ${chg ? 'change' : ''} by strike near spot"></canvas></div>` : '<p class="note" style="margin:0">Appears with the first option chain of the day.</p>'}</div>`; }).join('')}</div>`;
+    const chg = a && a.mode === 'change', d = S.diary[`${u.name}-${ist().date}`], bt = d && d.open && d.open.oi ? tlabel(d.open.oi.ms) : '09:30';
+    return `<div class="card s6 acttop"><div class="kb-h"><h3>${esc(u.label)}</h3><small class="mut">${chg ? `OI change since ${bt}` : 'open interest (no change yet)'} · ±1.5% of ${fmt(spot)}</small></div>
+      ${a && a.strikes.length ? `<div class="chart-box short"><canvas id="iact-${u.name}" role="img" aria-label="${esc(u.label)} call and put open interest ${chg ? 'change ' : ''}by strike near spot"></canvas></div>` : '<p class="note" style="margin:0">Appears with the first option chain of the day.</p>'}</div>`; }).join('')}</div>
+    <div class="kb-key"><span style="color:var(--ce)">■</span> Calls <span style="color:var(--pe)">■</span> Puts · up = contracts added, down = closed · darker = biggest 3 · dashed line = spot</div>`;
+}
+function detailView(u, it, dia) {
+  const c = it.candles || [], a = it.active, sigs = (dia && dia.signals) || [];
+  const strip = c.slice(1).slice(-8).map((b, i, arr) => { const prev = c[c.length - arr.length + i - 1]; const k = buildupOf(prev, b); return `<span class="pill ${BCLS[k]}" title="${esc(BUILDUP[k])}">${tlabel(b.ms)} ${BSHORT[k]}</span>`; }).join(' ');
+  const VC = { bullish: 'up', bearish: 'dn' };
+  const optRow = x => `<tr><td class="nw"><b>${fmt(x.strike)}</b> ${x.type}</td><td>${x.read ? `<span class="${VC[x.view] || 'mut'}">${esc(x.read)}</span>` : '—'}</td><td class="r nw">${x.ltp.toFixed(1)}${x.dLtpPct == null ? '' : ` <small class="${x.dLtpPct >= 0 ? 'up' : 'dn'}">${x.dLtpPct >= 0 ? '+' : ''}${x.dLtpPct.toFixed(0)}%</small>`}</td><td class="r">${x.dOi == null ? '—' : fmtQ(x.dOi)}</td></tr>`;
+  const base = dia && dia.open && dia.open.oi && it.shift;
+  return `<details class="card det" data-det="${u.name}"${S.det && S.det[u.name] ? ' open' : ''}><summary><b>${esc(u.label)}: details</b> <small class="mut">why the trend, levels, chart, top options, signals, diary</small></summary>
+    <ul class="why">${it.trend.parts.map(p => `<li><span class="${p.v > 0 ? 'up' : p.v < 0 ? 'dn' : 'mut'}">${p.v > 0 ? '▲' : p.v < 0 ? '▼' : '•'}</span> ${esc(p.why)}</li>`).join('')}</ul>
+    ${strip ? `<div class="strip">${strip}</div>` : ''}
+    <div class="grid" style="margin-top:10px"><div class="s4">${intraLevels(it, it.fut.ltp)}</div><div class="s8"><div class="chart-box short"><canvas id="intra-${u.name}" role="img" aria-label="${esc(u.label)} futures price, VWAP and open interest today"></canvas></div></div></div>
+    ${a && a.calls.length ? `<div class="grid" style="margin-top:10px"><div class="s6"><div class="sub" style="margin:0 0 4px">${esc(a.text)}</div><div class="tw"><table class="compact"><thead><tr><th>Option</th><th>Read</th><th class="r">Price vs 09:30</th><th class="r">OI chg</th></tr></thead><tbody>${a.calls.map(optRow).join('')}${a.puts.map(optRow).join('')}</tbody></table></div></div>
+      ${base ? `<div class="s6"><div class="sub" style="margin:0 0 4px">Calls vs puts added through the day, and PCR</div><div class="chart-box short"><canvas id="ipcr-${u.name}" role="img" aria-label="${esc(u.label)} total call and put open interest change and put/call ratio through the day"></canvas></div></div>` : ''}</div>` : ''}
+    ${sigs.length ? `<div class="tw" style="margin-top:10px"><table class="compact"><thead><tr><th>Signal</th><th class="r">Entry</th><th class="r">Invalid</th><th class="r">Target</th><th class="r">+30m</th><th class="r">+60m</th></tr></thead><tbody>${sigs.map(s => { const r = s.result || {}, f = x => x == null ? '…' : `<span class="${x >= 0 ? 'up' : 'dn'}">${x >= 0 ? '+' : ''}${x.toFixed(0)}</span>`;
+      return `<tr title="${esc(s.why)}"><td>${tlabel(s.ms)} <span class="pill ${s.side === 'long' ? 'p-good' : 'p-bad'}">${s.side}</span></td><td class="r">${fmt(s.entry)}</td><td class="r">${fmt(s.stop)}</td><td class="r">${fmt(s.target)}</td><td class="r">${f(r.at30)}</td><td class="r">${f(r.at60)}${r.stopped ? ' <small class="dn">stop</small>' : ''}</td></tr>`; }).join('')}</tbody></table></div>` : ''}
+    ${dia && dia.snaps.length ? `<div class="tw" style="margin-top:10px"><table class="compact"><thead><tr><th>Diary</th><th class="r">Futures</th><th>Trend</th><th>Build-up</th><th class="r">PCR</th></tr></thead><tbody>${dia.snaps.slice(-6).reverse().map(x => `<tr><td>${x.hm}</td><td class="r">${fmt(x.fut)}</td><td><span class="pill ${TCLS[x.label]}">${x.label}</span> ${x.score >= 0 ? '+' : ''}${(+x.score).toFixed(1)}</td><td>${BSHORT[x.build]}</td><td class="r">${x.pcr == null ? '—' : (+x.pcr).toFixed(2)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+  </details>`;
 }
 function intradayView() {
   const now = ist(), st = signalStats();
-  const cards = UNDERLYINGS.map(u => {
-    const it = S.intra[u.name], dia = S.diary[`${u.name}-${now.date}`];
-    if (!it || !it.trend) return `<div class="card"><h3>${esc(u.label)}</h3><p class="note" style="margin:0">${now.dow === 0 || now.dow === 6 ? 'Market closed today.' : 'Waiting for today’s first futures bars from Kite (from 09:15, every 15 minutes).'}</p></div>`;
-    const tr = it.tracker || { confirmed: it.trend.label }, c = it.candles || [], last = dia && dia.flips.length ? dia.flips[dia.flips.length - 1] : null;
-    const strip = c.slice(1).map((b, i) => { const k = buildupOf(c[i], b); return `<span class="pill ${BCLS[k]}" title="${tlabel(b.ms)}: ${esc(BUILDUP[k])}">${tlabel(b.ms)} ${BSHORT[k]}</span>`; }).join(' ');
-    const sigs = (dia && dia.signals) || [];
-    return `<section class="card intra"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline">
-      <h3>${esc(u.label)} futures: <span class="pill ${TCLS[tr.confirmed]}" style="font-size:13px">${esc(tr.confirmed)}</span> <small class="mut">score ${it.trend.score >= 0 ? '+' : ''}${it.trend.score.toFixed(1)} · ${tr.pending ? 'turning ' + esc(tr.pending) + '? (needs one more check)' : 'confirmed'}</small></h3>
-      <span class="mut">Futures ${fmt(it.fut.ltp)} · VWAP ${fmt(it.vwap)} · OI ${(it.fut.oi / 1e6).toFixed(2)}M · ${tlabel(it.ms)} IST</span></div>
-      ${last ? `<div class="banner ${last.to === 'Up' ? 'info' : last.to === 'Down' ? 'bad' : ''}" style="margin:8px 0">Trend change at ${tlabel(last.ms)}: ${esc(last.from)} → <b>${esc(last.to)}</b> at ${fmt(last.price)}. ${esc((last.reasons || []).join('; '))}.</div>` : ''}
-      ${it.reversal ? `<div class="banner" style="margin:8px 0">Reversal watch: ${esc(it.reversal)}.</div>` : ''}
-      <ul class="why">${it.trend.parts.map(p => `<li><span class="${p.v > 0 ? 'up' : p.v < 0 ? 'dn' : 'mut'}">${p.v > 0 ? '▲' : p.v < 0 ? '▼' : '•'}</span> ${esc(p.why)}</li>`).join('')}</ul>
-      <div class="strip">${strip || '<span class="mut">Build-up appears after the second 15-minute bar.</span>'}</div>
-      <div class="grid" style="margin-top:12px"><div class="s5">${intraLevels(it, it.fut.ltp)}</div><div class="s7"><div class="chart-box"><canvas id="intra-${u.name}" role="img" aria-label="${esc(u.label)} futures price, VWAP and open interest today"></canvas></div></div></div>
-      ${activeBlock(u, it)}
-      ${optionChangeBlock(u, it, dia)}
-      <h4 style="margin:14px 0 6px">Opportunity lines <small class="mut">unproven: paper-traded and scored</small></h4>
-      ${sigs.length ? `<div class="tw"><table><thead><tr><th>Time</th><th>Side</th><th class="r">Entry</th><th class="r">Invalid at</th><th class="r">Target</th><th>Why</th><th class="r">+30m</th><th class="r">+60m</th></tr></thead><tbody>${sigs.map(s => { const r = s.result || {}, f = x => x == null ? '…' : `<span class="${x >= 0 ? 'up' : 'dn'}">${x >= 0 ? '+' : ''}${x.toFixed(0)}</span>`;
-        return `<tr><td>${tlabel(s.ms)}</td><td><span class="pill ${s.side === 'long' ? 'p-good' : 'p-bad'}">${s.side}</span></td><td class="r">${fmt(s.entry)}</td><td class="r">${fmt(s.stop)}</td><td class="r">${fmt(s.target)}</td><td>${esc(s.why)}</td><td class="r">${f(r.at30)}</td><td class="r">${f(r.at60)}${r.stopped ? ' <small class="dn">stopped</small>' : ''}</td></tr>`; }).join('')}</tbody></table></div>`
-        : '<p class="note" style="margin:0">None yet today. A line appears only when the confirmed trend and a fresh break of the opening range or the previous day’s high/low agree, with matching build-up and the right side of VWAP.</p>'}
-      ${dia && dia.snaps.length ? `<h4 style="margin:14px 0 6px">Diary (every 30 minutes)</h4><div class="tw"><table><thead><tr><th>Time</th><th class="r">Futures</th><th class="r">VWAP</th><th class="r">OI</th><th>Build-up</th><th>Trend</th><th class="r">Support</th><th class="r">Resistance</th><th class="r">PCR</th></tr></thead><tbody>${dia.snaps.map(x => `<tr><td>${x.hm}</td><td class="r">${fmt(x.fut)}</td><td class="r">${fmt(x.vwap)}</td><td class="r">${(x.oi / 1e6).toFixed(2)}M</td><td><span class="pill ${BCLS[x.build]}">${BSHORT[x.build]}</span></td><td><span class="pill ${TCLS[x.label]}">${x.label}</span> ${x.score >= 0 ? '+' : ''}${(+x.score).toFixed(1)}</td><td class="r">${fmt(x.support)}</td><td class="r">${fmt(x.resistance)}</td><td class="r">${x.pcr == null ? '—' : (+x.pcr).toFixed(2)}</td></tr>`).join('')}</tbody></table></div>` : ''}
-      <h4 style="margin:14px 0 6px">Tomorrow’s bias</h4>
-      ${dia && dia.bias ? `<p style="margin:0"><span class="pill ${dia.bias.label === 'Bullish' ? 'p-good' : dia.bias.label === 'Bearish' ? 'p-bad' : 'p-neutral'}">${dia.bias.label}</span> ${esc(dia.bias.reasons.join('; '))}.</p>` : '<p class="note" style="margin:0">Appears after 15:25, from the close against VWAP, where it closed in the day’s range, the day’s open-interest build-up and the put/call change.</p>'}
-    </section>`;
-  }).join('');
+  const det = UNDERLYINGS.map(u => { const it = S.intra[u.name]; return it && it.trend ? detailView(u, it, S.diary[`${u.name}-${now.date}`]) : ''; }).join('');
   return `${activeTop()}
-    <div style="margin-top:14px">${keyBoard(now)}</div>
-    <div style="margin-top:14px">${positionsCard(now)}</div>
-    <div class="banner info" style="margin:14px 0">Trader’s diary for today. Trend from 15-minute futures bars (price, open interest, VWAP), the opening range, the previous day’s levels and the option open-interest walls; checked every 5 minutes while this page is open. A trend change needs two checks in a row. Opportunity lines are <b>unproven</b>: ${st.n ? `${st.win} of ${st.n} scored signals were ahead after 60 minutes without hitting their invalidation (${st.pts >= 0 ? '+' : ''}${st.pts.toFixed(0)} points in all)` : 'none scored yet'}. Not advice; nothing is ever ordered.</div>
-    ${cards}`;
+    <div style="margin-top:12px">${keyBoard(now)}</div>
+    <div style="margin-top:12px">${positionsCard(now)}</div>
+    ${det}
+    <p class="note" style="margin:10px 0 0">Signals are unproven paper trades${st.n ? `: ${st.win} of ${st.n} ahead after 60 minutes (${st.pts >= 0 ? '+' : ''}${st.pts.toFixed(0)} pts)` : ''}. Updates every minute while this page is open. Not advice; nothing is ever ordered.</p>`;
 }
 function drawIntraday() {
   if (typeof Chart === 'undefined') return;
@@ -1273,7 +1237,7 @@ function render() {
   const v = $('#view');
   const hook = () => { v.querySelectorAll('[data-tbsel] button').forEach(b => b.onclick = () => { S.tbSel = b.dataset.k; render(); }); v.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => { S.tab = b.dataset.goto; render(); }); };
   if (S.tab === 'today') { v.innerHTML = todayView(); return; }
-  if (S.tab === 'intra') { v.innerHTML = intradayView(); drawIntraday(); return; }
+  if (S.tab === 'intra') { v.innerHTML = intradayView(); drawIntraday(); v.querySelectorAll('details[data-det]').forEach(d => d.ontoggle = () => { S.det = S.det || {}; const was = !!S.det[d.dataset.det]; S.det[d.dataset.det] = d.open; if (d.open && !was) render(); }); return; }
   if (S.tab === 'condor' || S.tab === 'strangle') { v.innerHTML = structView(S.tab); hook(); drawPayoff(S.tab); return; }
   if (S.tab === 'range') { v.innerHTML = rangeTabView(); hook(); return; }
   if (S.tab === 'track') { v.innerHTML = trackView() + paperView(); drawTrack(); return; }
