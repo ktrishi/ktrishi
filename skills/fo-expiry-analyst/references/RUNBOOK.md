@@ -29,6 +29,21 @@ The scheduled task's own prompt names older steps: its "step 3 (settle)" means s
 
 On a Saturday or Sunday, stop and reply `F&O <slot>: weekend, nothing run.`
 
+## 1a. Afternoon only: quiet check (skip the run when nothing has moved)
+1. **One message:**
+   - Kite `session` with `mode: "status"`.
+   - Kite `market` with `mode: "quote"` for `["NSE:NIFTY 50","NSE:NIFTY BANK","NSE:INDIA VIX"]`.
+   - `ArtifactData` `get` of `analyst/latest` with `out_dir: "W/dump"`.
+2. Apply the Kite logout and holiday checks from step 1.
+3. **One Bash call:**
+   ```
+   node R/analyst/prep.js quiet --latest W/dump/analyst/latest.json --spot 'NIFTY=<spot>,BANKNIFTY=<spot>' --vix <vix> --now <ms>
+   ```
+4. **Act on the result:**
+   - **`QUIET …`:** write nothing and stop. Reply with the single line `F&O 14:45 skipped: quiet market (<the QUIET text>). Morning locks stand.`
+     - The check only skips when both indices have moved less than 0.5% and VIX less than 10% since 09:40, and no expiry is due today or on the next session.
+   - **`RUN …`:** carry on with step 1, but skip the three calls you have already made. Mention the RUN reason in the phone line.
+
 ## 1. Read everything (one message, all calls in parallel)
 **Kite:**
 - `session` with `mode: "status"`.

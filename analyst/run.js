@@ -80,6 +80,8 @@ function lockCmd() {
     runMs: input.nowMs, slot: input.slot, events: input.events || [], notes: input.notes || '',
     overlays: Object.fromEntries(made.map(l => [l.key, { expiry: l.expiry, ...l.overlay, centre: l.centre, modelCentre: l.modelCentre, band68: l.band68, modelBand68: l.modelBand68 }])),
     sources: input.sources || [],
+    // spots and VIX at this lock, so the afternoon run can tell a quiet market and skip itself
+    spots: Object.fromEntries(input.chains.map(c => [c.idx, c.spot])), vix: (input.chains.find(c => c.vix) || {}).vix ?? null,
     // reusable context (expiry list, verified event calendar, candles) so later runs can skip refetching it
     cache: input.cache || null,
   }, versions));

@@ -40,6 +40,7 @@ Only the analyst writes locks, outcomes, scores, post-mortems, weights and confi
 
 ## To run the analyst (scheduled or on request)
 Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked out. The run is built to use few tokens, because every model turn re-reads the whole conversation:
+0. **Afternoon quiet check:** `prep.js quiet` compares spots and VIX with the 09:40 lock. The run skips itself (with phone line `F&O 14:45 skipped: quiet market …`) when Nifty and Bank Nifty each moved less than 0.5% and VIX less than 10%, unless an expiry is due today or on the next session. This saves about $0.80 on a quiet afternoon.
 1. **Read everything in one message:** Kite session and spot quote, the ArtifactData dumps (`out_dir`), and the `hist-*` documents.
 2. **Plan in one Bash call:** `run.js state` plus `prep.js plan`. These print the candle start date, the cached events and the exact two quote calls.
 3. **Fetch in one message:** the two quote calls, plus daily candles in the morning.

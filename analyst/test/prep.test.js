@@ -96,3 +96,29 @@ test('build refuses when an expiry did not come back (wrong prefix)', () => {
   assert.match(err, /MISSING NFO:NIFTY26D08/);
   assert.equal(fs.existsSync(path.join(d, 'i.json')), false);
 });
+
+test('afternoon quiet check: skip only when nothing moved and no expiry is due', () => {
+  const d = tmp(), lf = path.join(d, 'latest.json');
+  const morning = Date.UTC(2026, 10, 27, 4, 12), afternoon = Date.UTC(2026, 10, 27, 9, 15); // Fri 27-Nov
+  const base = { runMs: morning, slot: '09:40', spots: { NIFTY: 25875, BANKNIFTY: 64000 }, vix: 17.0,
+    overlays: { 'NIFTY-weekly': { expiry: '2026-12-01' }, 'NIFTY-monthly': { expiry: '2026-12-29' } } };
+  const q = (latest, spot, vix, now = afternoon) => { fs.writeFileSync(lf, JSON.stringify(latest)); return run([PREP, 'quiet', '--latest', lf, '--spot', spot, '--vix', String(vix), '--now', String(now)]).trim(); };
+  assert.match(q(base, 'NIFTY=25900,BANKNIFTY=63900', 17.3), /^QUIET Nifty \+0\.10%, BN -0\.16%, VIX \+1\.8% since 09:40$/);
+  assert.match(q(base, 'NIFTY=26010,BANKNIFTY=64000', 17), /^RUN NIFTY moved 0\.52%/);
+  assert.match(q(base, 'NIFTY=25875,BANKNIFTY=64000', 19), /^RUN VIX moved/);
+  assert.match(q({ ...base, spots: undefined }, 'NIFTY=25875,BANKNIFTY=64000', 17), /^RUN the morning lock did not record spots/);
+  assert.match(q({ ...base, runMs: morning - 864e5 }, 'NIFTY=25875,BANKNIFTY=64000', 17), /^RUN no 09:40 lock today/);
+  // Monday 30-Nov afternoon: the 1-Dec weekly expires on the next session
+  const mon = Date.UTC(2026, 10, 30, 9, 15);
+  assert.match(q({ ...base, runMs: Date.UTC(2026, 10, 30, 4, 12) }, 'NIFTY=25875,BANKNIFTY=64000', 17, mon), /^RUN expiry due 2026-12-01/);
+});
+
+test('lock records spots and VIX in analyst/latest for the quiet check', () => {
+  const d = tmp(), { sampleChain } = require('./fixtures'), ch = sampleChain(eng);
+  fs.writeFileSync(path.join(d, 'input.json'), JSON.stringify({ nowMs: ch.takenMs, slot: '09:40', chains: [ch], overlays: {}, events: [] }));
+  fs.writeFileSync(path.join(d, 'state.json'), '{}');
+  run([RUN, 'lock', '--input', path.join(d, 'input.json'), '--state', path.join(d, 'state.json'), '--out', d]);
+  const e = JSON.parse(fs.readFileSync(path.join(d, 'batch-1.json'), 'utf8')).find(x => x.collection === 'analyst');
+  const latest = JSON.parse(fs.readFileSync(e.file_path, 'utf8'));
+  assert.deepEqual(latest.spots, { NIFTY: 25180 }); assert.equal(latest.vix, 16.2);
+});

@@ -7,6 +7,8 @@
 //   build: node analyst/prep.js build --plan plan.json --quotes q1.json,q2.json [--candles candles.json]
 //                                  [--latest DUMP/analyst/latest.json] --slot 09:40 --now MS --out input.json
 //          Turns the saved quote files into input.json (chains, spot, futures, VIX, prevHLC, close3, cache).
+//   quiet: node analyst/prep.js quiet --latest DUMP/analyst/latest.json --spot 'NIFTY=..,BANKNIFTY=..' --vix V --now MS
+//          Afternoon only. Prints QUIET (skip this run) or RUN <reason>.
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadEngine } = require('./engine');
@@ -140,11 +142,32 @@ function buildCmd(o) {
   console.log(summary.join('\n') + `\nVIX ${vix}\ninput written to ${o.out} (${chains.length} contracts)`);
 }
 
+// Afternoon only: skip the run when nothing has moved since this morning's lock. Never skip when an expiry is due today
+// or on the next session (those last locks matter most for scoring), or when the morning lock is missing.
+function quietCmd(o) {
+  const nowMs = +o.now || Date.now(), now = eng.ist(nowMs), spot = kv(o.spot), vix = +o.vix || null;
+  const latest = o.latest && fs.existsSync(o.latest) ? readJson(o.latest) : null;
+  const run = why => { console.log(`RUN ${why}`); };
+  if (!latest || !latest.runMs || eng.ist(latest.runMs).date !== now.date || latest.slot !== '09:40') return run('no 09:40 lock today');
+  if (!latest.spots) return run('the morning lock did not record spots');
+  const soon = Object.values(latest.overlays || {}).map(o => o.expiry).filter(Boolean).filter(e => eng.isLive(e, now) && eng.tradingDaysFrac(nowMs, e) <= 1.5);
+  if (soon.length) return run(`expiry due ${[...new Set(soon)].join(', ')}: the last lock before settlement matters`);
+  const moves = [];
+  for (const [name, s0] of Object.entries(latest.spots)) {
+    const s1 = +spot[name]; if (!(s1 > 0 && s0 > 0)) return run(`no current spot for ${name}`);
+    const m = (s1 / s0 - 1) * 100; moves.push(`${name === 'BANKNIFTY' ? 'BN' : 'Nifty'} ${m >= 0 ? '+' : ''}${m.toFixed(2)}%`);
+    if (Math.abs(m) >= 0.5) return run(`${name} moved ${m.toFixed(2)}% since 09:40`);
+  }
+  let vm = null;
+  if (vix && latest.vix) { vm = (vix / latest.vix - 1) * 100; if (Math.abs(vm) >= 10) return run(`VIX moved ${vm.toFixed(1)}% since 09:40`); }
+  console.log(`QUIET ${moves.join(', ')}${vm == null ? '' : `, VIX ${vm >= 0 ? '+' : ''}${vm.toFixed(1)}%`} since 09:40`);
+}
+
 if (require.main === module) {
   const args = process.argv.slice(2), cmd = args.shift(), o = {};
   for (let i = 0; i < args.length; i += 2) o[args[i].replace(/^--/, '')] = args[i + 1];
   try {
-    if (cmd === 'plan') planCmd(o); else if (cmd === 'build') buildCmd(o);
+    if (cmd === 'plan') planCmd(o); else if (cmd === 'build') buildCmd(o); else if (cmd === 'quiet') quietCmd(o);
     else { console.error('usage: prep.js plan|build ...'); process.exit(2); }
   } catch (e) { console.error('ERROR: ' + e.message); process.exit(1); }
 }

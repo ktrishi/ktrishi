@@ -561,13 +561,16 @@ function bandFinder({ rows, F, T, fairAtm, idx, cfg, smile }) {
   const best = xs => xs.filter(x => x.score != null).reduce((a, x) => !a || x.score > a.score || (x.score === a.score && x.pop > a.pop) ? x : a, null);
   return { grid: g, sd, stressSd, shift, costPts, lot, condor: { best: best(condors), all: condors }, strangle: { best: best(strangles), all: strangles } };
 }
-function tradeVerdict({ structure, best, regime, highEvent, paper, tdays, cfg }) {
+function tradeVerdict({ structure, best, regime, highEvent, paper, tdays, edge, cfg }) {
   const t = mergeConfig(cfg).trade, min = structure === 'condor' ? t.condorMin : t.strangleMin, per = structure === 'condor' ? 'maximum loss' : 'the loss on a 3σ move';
   const no = reason => ({ verdict: 'NO TRADE', reason }), paperOnly = reason => ({ verdict: 'PAPER-TRADE ONLY', reason });
-  if (!best) return no('no liquid strikes to build it from');
+  // the deciding reason comes first: market conditions, then whether options are cheap, then whether strikes exist
   if (regime === 'up' || regime === 'down') return no(`strong ${regime}-trend (price beyond rising 20/50/200-day averages): ranges break in trends`);
   if (highEvent) return no('high-impact event before expiry: a range sold into it can break, and options are priced for it');
   if (tdays != null && tdays < 1) return no('expiry day: too little time left and too much gamma to open a new short range');
+  if (edge && edge.source === 'iv') return no(edge.note || 'no price history, so no edge can be measured');
+  if (edge && edge.fair >= edge.iv) return no(`options are cheap: the index is moving at ${(edge.fair * 100).toFixed(1)}% a year against ${(edge.iv * 100).toFixed(1)}% implied, so selling them loses on average`);
+  if (!best) return no('no liquid strikes to build it from');
   if (!(best.ev > 0)) return no('expected value after costs is negative: options are not rich enough versus realised movement');
   if (!(best.score >= min)) return no(`edge too thin: expected profit is ${(best.score * 100).toFixed(1)}% of ${per} (needs ${Math.round(min * 100)}%)`);
   const pr = paper || { expiries: 0, pnl: 0, ev: 0 }, rs = x => (x < 0 ? '−' : '') + '₹' + Math.abs(Math.round(x)).toLocaleString('en-IN');
@@ -588,7 +591,7 @@ function tradeBands({ rows, F, T, tdays, closes, highEvent, idx, cfg, paper }) {
   if (!smile) return { error: 'no usable option prices' };
   const regime = trendRegime(closes), fair = fairVol({ iv: smile.atm, closes, regime: regime.regime, highEvent, cfg, tdays, T });
   const bf = bandFinder({ rows, F, T, fairAtm: fair.vol, idx, cfg, smile });
-  const v = s => tradeVerdict({ structure: s, best: bf[s].best, regime: regime.regime, highEvent, paper: paper && paper[s], tdays, cfg });
+  const v = s => tradeVerdict({ structure: s, best: bf[s].best, regime: regime.regime, highEvent, paper: paper && paper[s], tdays, edge: { iv: smile.atm, fair: fair.vol, source: fair.source, note: fair.note }, cfg });
   const verdicts = { condor: v('condor'), strangle: v('strangle') }, rank = { TRADE: 2, 'PAPER-TRADE ONLY': 1, 'NO TRADE': 0 };
   const pick = rank[verdicts.strangle.verdict] > rank[verdicts.condor.verdict] ? 'strangle' : 'condor';
   return { F, T, tdays: tdays ?? null, smile: { atm: smile.atm, flat: smile.flat, n: smile.n }, regime, fair, sd: bf.sd, stressSd: bf.stressSd, costPts: bf.costPts, lot: bf.lot,

@@ -119,6 +119,12 @@ test('verdict rules, in order, with one deciding reason', () => {
   assert.match(v({ best: { ev: -2, score: -0.02 } }).reason, /negative/);
   assert.match(v({ best: { ev: 1, score: 0.01 } }).reason, /thin/);
   assert.equal(v({ best: null }).verdict, 'NO TRADE');
+  assert.match(v({ best: null, regime: 'up' }).reason, /trend/, 'the deciding reason comes before a missing candidate');
+  assert.match(v({ best: null, highEvent: true }).reason, /event/);
+  const cheap = v({ best: null, edge: { iv: 0.175, fair: 0.274 } });
+  assert.equal(cheap.verdict, 'NO TRADE'); assert.match(cheap.reason, /cheap/); assert.match(cheap.reason, /27\.4%.*17\.5%/);
+  assert.equal(v({ edge: { iv: 0.15, fair: 0.12 } }).verdict, 'TRADE', 'rich options pass the cheapness check');
+  assert.match(v({ edge: { iv: 0.15, fair: 0.15, source: 'iv', note: 'no price history, so fair volatility = implied (no edge assumed)' } }).reason, /no price history/);
   assert.equal(eng.tradeVerdict({ structure: 'strangle', best: { ev: 5, score: 0.035 }, regime: 'range', highEvent: false, paper: rec(9, 2000, 2500), tdays: 3, cfg }).verdict, 'TRADE');
 });
 
