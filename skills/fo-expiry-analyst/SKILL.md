@@ -84,7 +84,7 @@ Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked
   - **Writing:** price down and OI up.
   - **Short covering** (price up) or **unwinding** (price down): OI down.
 
-  Call buying, call short covering, put writing and put unwinding lean bullish; the opposites lean bearish. The chart is a butterfly: puts to the left, calls to the right, the top 3 shown darker. The key board at the top of the tab shows trend, VWAP drift, wall moves, VIX, option tilt and the futures build-up.
+  Call buying, call short covering, put writing and put unwinding lean bullish; the opposites lean bearish. The graphs head the tab, Nifty and Bank Nifty side by side: strikes along the bottom, call and put volume rising side by side, the top 3 darker, a dashed spot line. The verdict and top-3 table sit in each index's detail section. The key board at the top of the tab shows trend, VWAP drift, wall moves, VIX, option tilt and the futures build-up.
 - **Rishi's positions** come from Kite `portfolio` (`mode: "positions"`, net view), shown live with each strike's distance from spot. A **breach** is a short strike within 0.5% of spot or beyond it. Positions are never stored.
 
 ## Trade bands (Today, Iron condor, Short strangle, Range view tabs)

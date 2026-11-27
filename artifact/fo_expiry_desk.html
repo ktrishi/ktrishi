@@ -1092,11 +1092,10 @@ function activeBlock(u, it) {
   const row = x => `<tr><td class="nw"><b>${fmt(x.strike)}</b> ${x.type}</td><td>${x.read ? `<span class="${VC[x.view] || 'mut'}">${esc(x.read)}</span>` : '<span class="mut">—</span>'}</td><td class="r nw">${x.ltp.toFixed(1)}${x.dLtpPct == null ? '' : ` <small class="${x.dLtpPct >= 0 ? 'up' : 'dn'}">${x.dLtpPct >= 0 ? '+' : ''}${x.dLtpPct.toFixed(0)}%</small>`}</td><td class="r">${vq(x.vol)}</td><td class="r">${x.dOi == null ? '—' : fmtQ(x.dOi)}</td></tr>`;
   return `<h4 style="margin:16px 0 6px">Most active options near spot <small class="mut">today’s volume, strikes within ±1.5% of ${fmt((S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot)}</small></h4>
     <div class="banner ${a.view === 'bearish' ? 'bad' : a.view === 'bullish' ? 'info' : ''}" style="margin:0 0 10px">${esc(a.text)}.</div>
-    <div class="grid"><div class="s6"><div class="sub" style="margin:0 0 4px"><span style="color:var(--pe);font-weight:600">◀ Puts traded</span> · strike · <span style="color:var(--ce);font-weight:600">Calls traded ▶</span>. Darker = top 3. ▶ marks spot.</div><div class="chart-box tall"><canvas id="iact-${u.name}" role="img" aria-label="${esc(u.label)} most traded calls and puts by strike near spot"></canvas></div></div>
-      <div class="s6"><div class="tw"><table><thead><tr><th>Option</th><th>Read</th><th class="r">Price (vs 09:30)</th><th class="r">Volume</th><th class="r">OI change</th></tr></thead><tbody>
+    <div><div class="tw"><table><thead><tr><th>Option</th><th>Read</th><th class="r">Price (vs 09:30)</th><th class="r">Volume</th><th class="r">OI change</th></tr></thead><tbody>
         <tr><td colspan="5" class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Top calls</td></tr>${a.calls.map(row).join('')}
         <tr><td colspan="5" class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Top puts</td></tr>${a.puts.map(row).join('')}
-      </tbody></table></div><p class="note" style="margin:6px 0 0">Read: price and open interest both up = buying; price down with open interest up = writing; open interest falling = covering or unwinding. Calls bought or puts written lean bullish; calls written or puts bought lean bearish.</p></div></div>`;
+      </tbody></table></div><p class="note" style="margin:6px 0 0">Graph at the top of this tab. Read: price and open interest both up = buying; price down with open interest up = writing; open interest falling = covering or unwinding. Calls bought or puts written lean bullish; calls written or puts bought lean bearish.</p></div>`;
 }
 function optionChangeBlock(u, it, dia) {
   const base = dia && dia.open && dia.open.oi;
@@ -1142,6 +1141,12 @@ function keyBoard(now) {
   }).join('');
   return `<div class="grid kbs">${panels}</div>`;
 }
+function activeTop() {
+  return `<div class="grid">${UNDERLYINGS.map(u => { const it = S.intra[u.name], a = it && it.active, spot = (S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot;
+    return `<div class="card s6 acttop"><h3>${esc(u.label)}: most active options</h3>
+      <div class="sub" style="margin:0 0 6px">Today’s volume by strike, ±1.5% of spot ${fmt(spot)}. <span style="color:var(--ce);font-weight:600">■ Calls</span> <span style="color:var(--pe);font-weight:600">■ Puts</span>; darker = top 3; dashed line = spot.</div>
+      ${a && a.strikes.length ? `<div class="chart-box"><canvas id="iact-${u.name}" role="img" aria-label="${esc(u.label)} call and put volume by strike near spot"></canvas></div>` : '<p class="note" style="margin:0">Appears with the first option chain of the day.</p>'}</div>`; }).join('')}</div>`;
+}
 function intradayView() {
   const now = ist(), st = signalStats();
   const cards = UNDERLYINGS.map(u => {
@@ -1169,7 +1174,8 @@ function intradayView() {
       ${dia && dia.bias ? `<p style="margin:0"><span class="pill ${dia.bias.label === 'Bullish' ? 'p-good' : dia.bias.label === 'Bearish' ? 'p-bad' : 'p-neutral'}">${dia.bias.label}</span> ${esc(dia.bias.reasons.join('; '))}.</p>` : '<p class="note" style="margin:0">Appears after 15:25, from the close against VWAP, where it closed in the day’s range, the day’s open-interest build-up and the put/call change.</p>'}
     </section>`;
   }).join('');
-  return `${keyBoard(now)}
+  return `${activeTop()}
+    <div style="margin-top:14px">${keyBoard(now)}</div>
     <div style="margin-top:14px">${positionsCard(now)}</div>
     <div class="banner info" style="margin:14px 0">Trader’s diary for today. Trend from 15-minute futures bars (price, open interest, VWAP), the opening range, the previous day’s levels and the option open-interest walls; checked every 5 minutes while this page is open. A trend change needs two checks in a row. Opportunity lines are <b>unproven</b>: ${st.n ? `${st.win} of ${st.n} scored signals were ahead after 60 minutes without hitting their invalidation (${st.pts >= 0 ? '+' : ''}${st.pts.toFixed(0)} points in all)` : 'none scored yet'}. Not advice; nothing is ever ordered.</div>
     ${cards}`;
@@ -1193,16 +1199,17 @@ function drawIntraday() {
     }
     const cv3 = document.getElementById('iact-' + u.name);
     if (cv3 && it0 && it0.active) {
-      const a = it0.active, spot = (S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot, order = a.strikes.map((k, i) => i).sort((x, y) => a.strikes[y] - a.strikes[x]);
+      const a = it0.active, spot = (S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot;
       const near = a.strikes.reduce((bi, k, i) => Math.abs(k - spot) < Math.abs(a.strikes[bi] - spot) ? i : bi, 0);
       const topC = new Set(a.calls.map(x => x.strike)), topP = new Set(a.puts.map(x => x.strike));
-      S.charts['iact' + u.name] = new Chart(cv3, { type: 'bar', data: { labels: order.map(i => (i === near ? '▶ ' : '') + fmt(a.strikes[i])), datasets: [
-        { label: 'Puts traded', data: order.map(i => -a.peVol[i]), backgroundColor: order.map(i => topP.has(a.strikes[i]) ? css('--pe') : 'rgba(235,104,52,.28)'), borderRadius: 2, stack: 's' },
-        { label: 'Calls traded', data: order.map(i => a.ceVol[i]), backgroundColor: order.map(i => topC.has(a.strikes[i]) ? css('--ce') : 'rgba(42,120,214,.28)'), borderRadius: 2, stack: 's' }] },
-        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
-          plugins: { legend: { display: false }, tooltip: { callbacks: { title: x => 'Strike ' + x[0].label.replace('▶ ', ''), label: x => `${x.dataset.label}: ${fmtQ(Math.abs(x.parsed.x)).replace('+', '')}` } } },
-          scales: { x: { stacked: true, grid: { color: grid }, border: { display: false }, ticks: { color: tick, callback: v => { const a = Math.abs(v); return a >= 1e6 ? (a / 1e6).toFixed(0) + 'M' : a >= 1e3 ? Math.round(a / 1e3) + 'K' : a; } } },
-            y: { stacked: true, grid: { display: false }, ticks: { color: tick, font: { size: 11 } } } } } });
+      const spotLine = { id: 'spotLine', afterDatasetsDraw(chart) { const x = chart.scales.x.getPixelForValue(near), { top, bottom } = chart.chartArea, cx = chart.ctx; cx.save(); cx.strokeStyle = tick; cx.setLineDash([4, 4]); cx.beginPath(); cx.moveTo(x, top); cx.lineTo(x, bottom); cx.stroke(); cx.restore(); } };
+      const vq = v => { const z = Math.abs(v); return z >= 1e6 ? (z / 1e6).toFixed(0) + 'M' : z >= 1e3 ? Math.round(z / 1e3) + 'K' : z; };
+      S.charts['iact' + u.name] = new Chart(cv3, { type: 'bar', plugins: [spotLine], data: { labels: a.strikes.map(fmt), datasets: [
+        { label: 'Calls traded', data: a.ceVol, backgroundColor: a.strikes.map(k => topC.has(k) ? css('--ce') : 'rgba(42,120,214,.3)'), borderRadius: 2, categoryPercentage: .82, barPercentage: .95 },
+        { label: 'Puts traded', data: a.peVol, backgroundColor: a.strikes.map(k => topP.has(k) ? css('--pe') : 'rgba(235,104,52,.3)'), borderRadius: 2, categoryPercentage: .82, barPercentage: .95 }] },
+        options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { display: false }, tooltip: { callbacks: { title: x => 'Strike ' + x[0].label, label: x => `${x.dataset.label}: ${vq(x.parsed.y)}` } } },
+          scales: { x: { grid: { display: false }, ticks: { color: tick, maxRotation: 0, autoSkipPadding: 6, font: { size: 10.5 } } }, y: { grid: { color: grid }, border: { display: false }, ticks: { color: tick, callback: v => vq(v) } } } } });
     }
     const cv2 = document.getElementById('ipcr-' + u.name);
     if (cv2 && it0 && base && it0.optSeries && it0.optSeries.length) {
