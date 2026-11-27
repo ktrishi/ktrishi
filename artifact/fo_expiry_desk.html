@@ -847,9 +847,11 @@ function errText(e) {
   return 'Could not reach Kite (' + code + (e.message ? ': ' + e.message : '') + '). Press Refresh to try again.';
 }
 
+const plainCopy = o => o == null ? o : JSON.parse(JSON.stringify(o));
 async function dbAll(col) {
   if (!S.db) return [];
-  try { const q = await S.db.collection(col).get(); return q.docs.map(d => ({ id: d.id, ...d.data() })); } catch (e) { return []; }
+  // documents come back read-only (frozen); the page edits its working copies (diary snapshots, proposal status), so clone them
+  try { const q = await S.db.collection(col).get(); return q.docs.map(d => ({ id: d.id, ...plainCopy(d.data()) })); } catch (e) { return []; }
 }
 async function dbSet(path, body) { if (!S.db) return false; try { await S.db.doc(path).set(body); return true; } catch (e) { return false; } }
 
@@ -866,7 +868,7 @@ async function loadStore() {
   S.proposals = await dbAll('proposals');
   S.runs = (await dbAll('runs')).sort((a, b) => (b.runMs || 0) - (a.runMs || 0));
   if (S.db) {
-    try { const a = await S.db.doc('analyst/latest').get(); S.analyst = a.exists ? a.data() : null; } catch (e) { S.analyst = null; }
+    try { const a = await S.db.doc('analyst/latest').get(); S.analyst = a.exists ? plainCopy(a.data()) : null; } catch (e) { S.analyst = null; }
     try { const c = await S.db.doc('config/model').get(); S.config = mergeConfig(c.exists ? c.data() : null); } catch (e) { S.config = mergeConfig(null); }
   }
 }
@@ -1116,10 +1118,10 @@ function keyBoard(now) {
         <small class="mut">${tr.pending ? 'turning ' + esc(tr.pending) + '?' : flip ? 'since ' + tlabel(flip.ms) : 'no flip today'} · ${new Date(it.ms).toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' })}</small></div>
       ${alert ? `<div class="kb-alert ${it.err || (flipNew && flip.to === 'Down') ? 'bad' : flipNew ? 'info' : ''}">${alert}</div>` : ''}
       <div class="kb-g">
-        ${tile('Option writing', sh ? `<span class="${sh.tilt === 'bullish' ? 'up' : sh.tilt === 'bearish' ? 'dn' : ''}">${sh.tilt === 'bullish' ? 'Puts' : sh.tilt === 'bearish' ? 'Calls' : 'Balanced'}</span>` : '—', sh ? `C ${fmtQ(sh.ceAdd)} · P ${fmtQ(sh.peAdd)}` : '')}
-        ${tile('Futures today', dP == null ? '—' : `${dP >= 0 ? '+' : ''}${dP.toFixed(2)}%`, `OI ${dOi == null ? '—' : (dOi >= 0 ? '+' : '') + dOi.toFixed(1) + '%'} · ${BSHORT[dayB]}`)}
         ${tile('vs VWAP', dVw == null ? '—' : `${dVw >= 0 ? '+' : ''}${dVw.toFixed(2)}%`, `${fmt(vwNow)} ${vwD == null ? '' : `${arrowOf(vwD)} ${Math.abs(vwD) < 1 ? 'flat' : (vwD >= 0 ? '+' : '') + fmt(vwD)} /30m`}`)}
         ${tile('Walls S / R', w ? `${fmt(w.support)}${wd(w.support, w0 && w0.support)} / ${fmt(w.resistance)}${wd(w.resistance, w0 && w0.resistance)}` : '—', w0 ? `09:30: ${fmt(w0.support)} / ${fmt(w0.resistance)}` : '')}
+        ${tile('Option writing', sh ? `<span class="${sh.tilt === 'bullish' ? 'up' : sh.tilt === 'bearish' ? 'dn' : ''}">${sh.tilt === 'bullish' ? 'Puts' : sh.tilt === 'bearish' ? 'Calls' : 'Balanced'}</span>` : '—', sh ? `C ${fmtQ(sh.ceAdd)} · P ${fmtQ(sh.peAdd)}` : '')}
+        ${tile('Futures today', dP == null ? '—' : `${dP >= 0 ? '+' : ''}${dP.toFixed(2)}%`, `OI ${dOi == null ? '—' : (dOi >= 0 ? '+' : '') + dOi.toFixed(1) + '%'} · ${BSHORT[dayB]}`)}
       </div>
       ${dia && dia.bias ? `<div class="kb-alert">Tomorrow: <b>${dia.bias.label}</b>. ${esc(dia.bias.reasons.slice(0, 2).join('; '))}.</div>` : ''}</div>`;
   }).join('');
@@ -1131,7 +1133,7 @@ function activeTop() {
     const chg = a && a.mode === 'change', d = S.diary[`${u.name}-${ist().date}`], bt = d && d.open && d.open.oi ? tlabel(d.open.oi.ms) : '09:30';
     return `<div class="card s6 acttop"><div class="kb-h"><h3>${esc(u.label)}</h3><small class="mut">${chg ? `OI change since ${bt}` : 'open interest (no change yet)'} · ±1.5% of ${fmt(spot)}</small></div>
       ${a && a.strikes.length ? `<div class="chart-box short"><canvas id="iact-${u.name}" role="img" aria-label="${esc(u.label)} call and put open interest ${chg ? 'change ' : ''}by strike near spot"></canvas></div>` : '<p class="note" style="margin:0">Appears with the first option chain of the day.</p>'}</div>`; }).join('')}</div>
-    <div class="kb-key"><span style="color:var(--ce)">■</span> Calls <span style="color:var(--pe)">■</span> Puts · up = contracts added, down = closed · darker = biggest 3 · dashed line = spot</div>`;
+    <div class="kb-key"><span style="color:var(--ce)">■</span> Calls <span style="color:var(--pe)">■</span> Puts · on a change graph, up = contracts added and down = closed · darker = biggest 3 · dashed line = spot</div>`;
 }
 function detailView(u, it, dia) {
   const c = it.candles || [], a = it.active, sigs = (dia && dia.signals) || [];
@@ -1153,8 +1155,8 @@ function detailView(u, it, dia) {
 function intradayView() {
   const now = ist(), st = signalStats();
   const det = UNDERLYINGS.map(u => { const it = S.intra[u.name]; return it && it.trend ? detailView(u, it, S.diary[`${u.name}-${now.date}`]) : ''; }).join('');
-  return `${activeTop()}
-    <div style="margin-top:12px">${keyBoard(now)}</div>
+  return `${keyBoard(now)}
+    <div style="margin-top:12px">${activeTop()}</div>
     <div style="margin-top:12px">${positionsCard(now)}</div>
     ${det}
     <p class="note" style="margin:10px 0 0">Signals are unproven paper trades${st.n ? `: ${st.win} of ${st.n} ahead after 60 minutes (${st.pts >= 0 ? '+' : ''}${st.pts.toFixed(0)} pts)` : ''}. Updates every minute while this page is open. Not advice; nothing is ever ordered.</p>`;

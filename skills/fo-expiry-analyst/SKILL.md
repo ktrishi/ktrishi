@@ -70,6 +70,7 @@ Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked
   - **Every 5 minutes:** the completed 15-minute bars are re-fetched, and the chains and walls refresh.
   - **Display:** each panel shows "updated HH:MM:SS".
   - **Failures:** a failed bar fetch keeps the last bars and shows a ⚠ with the reason.
+- **Database reads are read-only (frozen):** the page clones every document it loads before editing it. A failure reading "object is not extensible" means a missed clone.
 - **Flips:** the new label must hold for two checks and at least 3 minutes. "Trend since" is the last flip time, not the last update.
 - **Every 15 minutes:** today's futures bars with open interest (Kite historical, `15minute`, `oi: true`). Each bar is labelled long build-up, short build-up, short covering or long unwinding.
 - **Trend score from −5 to +5:**
@@ -96,8 +97,8 @@ Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked
 
   Call buying, call short covering, put writing and put unwinding lean bullish; the opposites lean bearish.
 - **Layout (compact):**
-  1. The OI-change graphs, Nifty and Bank Nifty side by side.
-  2. The key board: per index, trend and score, last flip and update time, one alert line, and 4 tiles in this order: option writing, futures today, vs VWAP (with its 30-minute drift), walls S/R against 09:30, plus a slim India VIX line.
+  1. The key board (at the very top): per index, trend and score, last flip and update time, one alert line, and 4 tiles (vs VWAP with its 30-minute drift, walls S/R against 09:30, option writing, futures today), plus a slim India VIX line.
+  2. The OI-change graphs, Nifty and Bank Nifty side by side.
   3. Positions.
   4. Per-index **details, collapsed by default:** the trend reasons, the last 8 build-up bars, the 3 nearest levels above and below, the futures chart, the top-3 options table, calls vs puts through the day with PCR, any signals, and the last 6 diary rows.
 
