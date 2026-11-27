@@ -139,20 +139,24 @@ test('option OI shift since the open: per-strike change, top writing strikes and
   assert.deepEqual(shifted.strikes, [26000], 'only strikes present at both times');
 });
 
-test('most active options near spot: top by volume, each read from price and OI change since the baseline', () => {
+test('most active options near spot: ranked by open-interest change since the baseline, each read from price and OI change', () => {
   const strikes = [25700, 25800, 25900, 26000, 26100, 26200, 26300];
   const ch = { strikes, ceVol: [5, 10, 40, 90, 70, 30, 2], peVol: [20, 60, 80, 50, 10, 5, 1], ce: [100, 200, 900, 1500, 1300, 500, 50], pe: [800, 900, 700, 300, 100, 50, 10],
     ceLtp: [320, 230, 150, 90, 50, 25, 10], peLtp: [10, 20, 45, 85, 140, 210, 300] };
   const base = { strikes, ce: [100, 200, 800, 1000, 1000, 500, 50], pe: [800, 700, 600, 350, 100, 50, 10], ceLtp: [300, 210, 140, 100, 60, 30, 12], peLtp: [12, 22, 40, 70, 130, 200, 290] };
   const a = eng.activeOptions(ch, base, 25950, { band: 0.015, n: 3 });
-  assert.deepEqual(a.strikes, [25700, 25800, 25900, 26000, 26100, 26200, 26300].filter(k => Math.abs(k / 25950 - 1) <= 0.015));
-  assert.deepEqual(a.calls.map(x => x.strike), [26000, 26100, 25900]);
-  assert.deepEqual(a.puts.map(x => x.strike), [25900, 25800, 26000]);
+  assert.equal(a.mode, 'change');
+  assert.deepEqual(a.strikes, strikes);
+  assert.deepEqual(a.ceChg, [0, 0, 100, 500, 300, 0, 0]); assert.deepEqual(a.peChg, [0, 200, 100, -50, 0, 0, 0]);
+  assert.deepEqual(a.calls.map(x => x.strike), [26000, 26100, 25900], 'largest open-interest changes, not volume');
+  assert.deepEqual(a.puts.map(x => x.strike), [25800, 25900, 26000]);
   const c26 = a.calls[0]; assert.equal(c26.read, 'writing'); assert.equal(c26.view, 'bearish'); near(c26.dLtpPct, -10, 1e-9); assert.equal(c26.dOi, 500);
-  const c259 = a.calls[2]; assert.equal(c259.read, 'buying'); assert.equal(c259.view, 'bullish');
-  const p259 = a.puts[0]; assert.equal(p259.read, 'buying'); assert.equal(p259.view, 'bearish');
+  assert.equal(a.calls[2].read, 'buying'); assert.equal(a.calls[2].view, 'bullish');
+  const p259 = a.puts[1]; assert.equal(p259.read, 'buying'); assert.equal(p259.view, 'bearish');
   const p26 = a.puts[2]; assert.equal(p26.read, 'short covering'); assert.equal(p26.view, 'bearish');
-  assert.match(a.text, /26,000 CE/); assert.match(a.text, /25,900 PE/);
+  assert.match(a.text, /26,000 CE/); assert.match(a.text, /25,800 PE/);
   const noBase = eng.activeOptions(ch, null, 25950, { band: 0.015, n: 3 });
-  assert.equal(noBase.calls[0].read, null, 'no baseline: volume only, no read');
+  assert.equal(noBase.mode, 'outstanding'); assert.equal(noBase.ceChg, null);
+  assert.deepEqual(noBase.calls.map(x => x.strike), [26000, 26100, 25900], 'ranked by outstanding open interest');
+  assert.equal(noBase.calls[0].read, null, 'no baseline: no read');
 });

@@ -79,12 +79,20 @@ Follow `references/RUNBOOK.md` step by step. Clone the repo if it is not checked
   - When asked about one, quote the running hit rate.
   - Never present a signal as a recommendation.
 - **Option open interest since 09:30:** the first check after 09:30 saves the ±3% chain of the nearest contract as a baseline in `diary.open.oi`. `oiShift` then gives the per-strike call and put change, the strikes with the heaviest writing above and below spot, and a tilt: put writing dominant is bullish, call writing dominant is bearish, otherwise balanced (threshold ±0.2 on (ΔPE − ΔCE)/(|ΔPE| + |ΔCE|)). Two charts show it: change by strike, and the total change through the day with the put/call ratio.
-- **Most active options near spot** (`activeOptions`): the top 3 calls and top 3 puts by today's volume, within ±1.5% of spot. Each gets a read from its price and OI change since the 09:30 baseline:
+- **Most active options near spot** (`activeOptions`): measured by **outstanding contracts (open interest), never volume**, because volume counts both buyers and sellers. Strikes within ±1.5% of spot:
+  - **With the 09:30 baseline:** ranked by the size of the open-interest change.
+  - **Without it:** ranked by outstanding open interest, and labelled as such.
+
+  Each of the top 3 calls and top 3 puts gets a read from its price and OI change since 09:30:
   - **Buying:** price up and OI up.
   - **Writing:** price down and OI up.
   - **Short covering** (price up) or **unwinding** (price down): OI down.
 
-  Call buying, call short covering, put writing and put unwinding lean bullish; the opposites lean bearish. The graphs head the tab, Nifty and Bank Nifty side by side: strikes along the bottom, call and put volume rising side by side, the top 3 darker, a dashed spot line. The verdict and top-3 table sit in each index's detail section. The key board at the top of the tab shows trend, VWAP drift, wall moves, VIX, option tilt and the futures build-up.
+  Call buying, call short covering, put writing and put unwinding lean bullish; the opposites lean bearish.
+- **Layout:**
+  - **Top of the tab:** the graphs, Nifty and Bank Nifty side by side. Bars show OI change per strike (up = added, down = closed), with the top 3 darker and a dashed spot line.
+  - **Each index's detail section:** the verdict and the top-3 table, plus the total call/put OI change and put/call ratio through the day.
+  - **Key board:** trend, VWAP drift, wall moves, VIX, option tilt and the futures build-up.
 - **Rishi's positions** come from Kite `portfolio` (`mode: "positions"`, net view), shown live with each strike's distance from spot. A **breach** is a short strike within 0.5% of spot or beyond it. Positions are never stored.
 
 ## Trade bands (Today, Iron condor, Short strangle, Range view tabs)

@@ -781,15 +781,16 @@ function oiShift(open, now, spot) {
     : `Call and put writing balanced (${both})`;
   return { strikes, ceChg, peChg, ceAdd, peAdd, callWalls, putWalls, tilt, text };
 }
-// Most active options near spot (by today's volume), each read from its price and OI change since the baseline.
+// Most active options near spot, by outstanding contracts: ranked by open-interest change since the baseline (or by open
+// interest when there is no baseline yet), each read from its price and OI change. Volume is not used: it counts both sides.
 const OPT_VIEW = { CE: { buying: 'bullish', writing: 'bearish', 'short covering': 'bullish', unwinding: 'bearish', mixed: 'neutral' },
   PE: { buying: 'bearish', writing: 'bullish', 'short covering': 'bearish', unwinding: 'bullish', mixed: 'neutral' } };
 function activeOptions(ch, base, spot, { band = 0.015, n = 3 } = {}) {
-  if (!ch || !ch.strikes || !ch.ceVol) return null;
+  if (!ch || !ch.strikes || !ch.ce) return null;
   const bi = base && base.strikes ? new Map(base.strikes.map((k, i) => [k, i])) : null, idx = [];
   ch.strikes.forEach((k, i) => { if (Math.abs(k / spot - 1) <= band) idx.push(i); });
   const one = (i, t) => {
-    const k = ch.strikes[i], vol = (t === 'CE' ? ch.ceVol : ch.peVol)[i] || 0, ltp = (t === 'CE' ? ch.ceLtp : ch.peLtp)[i] || 0, oi = (t === 'CE' ? ch.ce : ch.pe)[i] || 0;
+    const k = ch.strikes[i], vol = ((t === 'CE' ? ch.ceVol : ch.peVol) || [])[i] || 0, ltp = (t === 'CE' ? ch.ceLtp : ch.peLtp)[i] || 0, oi = (t === 'CE' ? ch.ce : ch.pe)[i] || 0;
     let read = null, dLtpPct = null, dOi = null;
     if (bi && bi.has(k) && base.ceLtp) {
       const j = bi.get(k), l0 = (t === 'CE' ? base.ceLtp : base.peLtp)[j] || 0, o0 = (t === 'CE' ? base.ce : base.pe)[j] || 0;
@@ -799,11 +800,14 @@ function activeOptions(ch, base, spot, { band = 0.015, n = 3 } = {}) {
     }
     return { strike: k, type: t, vol, ltp, oi, dLtpPct, dOi, read, view: read ? OPT_VIEW[t][read] : null };
   };
-  const top = t => idx.map(i => one(i, t)).sort((a, b) => b.vol - a.vol).slice(0, n);
-  const calls = top('CE'), puts = top('PE'), lead = [calls[0], puts[0]].filter(x => x && x.vol > 0);
+  const mode = bi && base.ceLtp ? 'change' : 'outstanding';
+  const key = x => mode === 'change' ? Math.abs(x.dOi || 0) : x.oi;
+  const top = t => idx.map(i => one(i, t)).sort((a, b) => key(b) - key(a)).slice(0, n);
+  const calls = top('CE'), puts = top('PE'), lead = [calls[0], puts[0]].filter(x => x && key(x) > 0);
+  const chg = t => mode === 'change' ? idx.map(i => { const k = ch.strikes[i]; if (!bi.has(k)) return 0; const j = bi.get(k); return ((t === 'CE' ? ch.ce : ch.pe)[i] || 0) - ((t === 'CE' ? base.ce : base.pe)[j] || 0); }) : null;
   const score = lead.reduce((a, x) => a + (x.view === 'bullish' ? 1 : x.view === 'bearish' ? -1 : 0), 0);
-  const text = lead.length ? `Most traded: ${lead.map(x => `${fmt(x.strike)} ${x.type}${x.read ? ` (${x.read}, ${x.view})` : ''}`).join(' and ')}${lead.some(x => x.read) ? `: ${score > 0 ? 'bullish' : score < 0 ? 'bearish' : 'mixed'} read` : ''}` : 'No option volume yet';
-  return { strikes: idx.map(i => ch.strikes[i]), ceVol: idx.map(i => ch.ceVol[i] || 0), peVol: idx.map(i => ch.peVol[i] || 0), calls, puts, text, view: score > 0 ? 'bullish' : score < 0 ? 'bearish' : 'mixed' };
+  const text = lead.length ? `${mode === 'change' ? 'Biggest open-interest change' : 'Largest open interest'}: ${lead.map(x => `${fmt(x.strike)} ${x.type}${x.read ? ` (${x.read}, ${x.view})` : ''}`).join(' and ')}${lead.some(x => x.read) ? `: ${score > 0 ? 'bullish' : score < 0 ? 'bearish' : 'mixed'} read` : ''}` : 'No option volume yet';
+  return { mode, strikes: idx.map(i => ch.strikes[i]), ce: idx.map(i => ch.ce[i] || 0), pe: idx.map(i => ch.pe[i] || 0), ceChg: chg('CE'), peChg: chg('PE'), calls, puts, text, view: score > 0 ? 'bullish' : score < 0 ? 'bearish' : 'mixed' };
 }
 /*ENGINE-END*/
 
@@ -1089,10 +1093,10 @@ function activeBlock(u, it) {
   const a = it.active; if (!a || !a.strikes.length) return '';
   const VC = { bullish: 'up', bearish: 'dn' };
   const vq = v => v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? Math.round(v / 1e3) + 'K' : String(v);
-  const row = x => `<tr><td class="nw"><b>${fmt(x.strike)}</b> ${x.type}</td><td>${x.read ? `<span class="${VC[x.view] || 'mut'}">${esc(x.read)}</span>` : '<span class="mut">—</span>'}</td><td class="r nw">${x.ltp.toFixed(1)}${x.dLtpPct == null ? '' : ` <small class="${x.dLtpPct >= 0 ? 'up' : 'dn'}">${x.dLtpPct >= 0 ? '+' : ''}${x.dLtpPct.toFixed(0)}%</small>`}</td><td class="r">${vq(x.vol)}</td><td class="r">${x.dOi == null ? '—' : fmtQ(x.dOi)}</td></tr>`;
-  return `<h4 style="margin:16px 0 6px">Most active options near spot <small class="mut">today’s volume, strikes within ±1.5% of ${fmt((S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot)}</small></h4>
+  const row = x => `<tr><td class="nw"><b>${fmt(x.strike)}</b> ${x.type}</td><td>${x.read ? `<span class="${VC[x.view] || 'mut'}">${esc(x.read)}</span>` : '<span class="mut">—</span>'}</td><td class="r nw">${x.ltp.toFixed(1)}${x.dLtpPct == null ? '' : ` <small class="${x.dLtpPct >= 0 ? 'up' : 'dn'}">${x.dLtpPct >= 0 ? '+' : ''}${x.dLtpPct.toFixed(0)}%</small>`}</td><td class="r">${vq(x.oi)}</td><td class="r">${x.dOi == null ? '—' : fmtQ(x.dOi)}</td></tr>`;
+  return `<h4 style="margin:16px 0 6px">${a.mode === 'change' ? 'Biggest open-interest changes near spot' : 'Largest open interest near spot'} <small class="mut">strikes within ±1.5% of ${fmt((S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot)}</small></h4>
     <div class="banner ${a.view === 'bearish' ? 'bad' : a.view === 'bullish' ? 'info' : ''}" style="margin:0 0 10px">${esc(a.text)}.</div>
-    <div><div class="tw"><table><thead><tr><th>Option</th><th>Read</th><th class="r">Price (vs 09:30)</th><th class="r">Volume</th><th class="r">OI change</th></tr></thead><tbody>
+    <div><div class="tw"><table><thead><tr><th>Option</th><th>Read</th><th class="r">Price (vs 09:30)</th><th class="r">Open interest</th><th class="r">OI change</th></tr></thead><tbody>
         <tr><td colspan="5" class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Top calls</td></tr>${a.calls.map(row).join('')}
         <tr><td colspan="5" class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Top puts</td></tr>${a.puts.map(row).join('')}
       </tbody></table></div><p class="note" style="margin:6px 0 0">Graph at the top of this tab. Read: price and open interest both up = buying; price down with open interest up = writing; open interest falling = covering or unwinding. Calls bought or puts written lean bullish; calls written or puts bought lean bearish.</p></div>`;
@@ -1104,8 +1108,7 @@ function optionChangeBlock(u, it, dia) {
   const sh = it.shift, cls = sh.tilt === 'bearish' ? 'bad' : sh.tilt === 'bullish' ? 'info' : '';
   return `<h4 style="margin:16px 0 6px">Option open interest since ${tlabel(base.ms)} <small class="mut">${esc(u.label)} ${dlabel(base.expiry)} expiry, strikes within ±3%</small></h4>
     <div class="banner ${cls}" style="margin:0 0 10px">${esc(sh.text)}.${sh.putWalls.length && sh.tilt !== 'bullish' ? ` Put writing below spot at ${sh.putWalls.map(fmt).join(' / ')}.` : ''}${sh.callWalls.length && sh.tilt !== 'bearish' ? ` Call writing above spot at ${sh.callWalls.map(fmt).join(' / ')}.` : ''}</div>
-    <div class="grid"><div class="s7"><div class="sub" style="margin:0 0 4px">Change by strike: bars up = added, down = cut. Dashed line = spot.</div><div class="chart-box"><canvas id="ioi-${u.name}" role="img" aria-label="${esc(u.label)} change in call and put open interest by strike since ${tlabel(base.ms)}"></canvas></div></div>
-      <div class="s5"><div class="sub" style="margin:0 0 4px">Total change through the day, and the put/call ratio</div><div class="chart-box"><canvas id="ipcr-${u.name}" role="img" aria-label="${esc(u.label)} total call and put open interest change and put/call ratio through the day"></canvas></div></div></div>`;
+    <div><div class="sub" style="margin:0 0 4px">Total change through the day, and the put/call ratio (by strike: the graphs at the top of this tab)</div><div class="chart-box"><canvas id="ipcr-${u.name}" role="img" aria-label="${esc(u.label)} total call and put open interest change and put/call ratio through the day"></canvas></div></div>`;
 }
 // Key signals first: one compact panel per index, the reads a trader checks every few minutes.
 function keyBoard(now) {
@@ -1143,9 +1146,10 @@ function keyBoard(now) {
 }
 function activeTop() {
   return `<div class="grid">${UNDERLYINGS.map(u => { const it = S.intra[u.name], a = it && it.active, spot = (S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot;
-    return `<div class="card s6 acttop"><h3>${esc(u.label)}: most active options</h3>
-      <div class="sub" style="margin:0 0 6px">Today’s volume by strike, ±1.5% of spot ${fmt(spot)}. <span style="color:var(--ce);font-weight:600">■ Calls</span> <span style="color:var(--pe);font-weight:600">■ Puts</span>; darker = top 3; dashed line = spot.</div>
-      ${a && a.strikes.length ? `<div class="chart-box"><canvas id="iact-${u.name}" role="img" aria-label="${esc(u.label)} call and put volume by strike near spot"></canvas></div>` : '<p class="note" style="margin:0">Appears with the first option chain of the day.</p>'}</div>`; }).join('')}</div>`;
+    const chg = a && a.mode === 'change', base = S.diary[`${u.name}-${ist().date}`], bt = base && base.open && base.open.oi ? tlabel(base.open.oi.ms) : '09:30';
+    return `<div class="card s6 acttop"><h3>${esc(u.label)}: ${chg ? `open-interest change since ${bt}` : 'outstanding open interest'}</h3>
+      <div class="sub" style="margin:0 0 6px">Strikes within ±1.5% of spot ${fmt(spot)}. <span style="color:var(--ce);font-weight:600">■ Calls</span> <span style="color:var(--pe);font-weight:600">■ Puts</span>; ${chg ? 'up = contracts added, down = closed; darker = top 3 changes' : 'no 09:30 baseline yet, so this shows open contracts, not their change; darker = top 3'}; dashed line = spot.</div>
+      ${a && a.strikes.length ? `<div class="chart-box"><canvas id="iact-${u.name}" role="img" aria-label="${esc(u.label)} call and put open interest ${chg ? 'change' : ''} by strike near spot"></canvas></div>` : '<p class="note" style="margin:0">Appears with the first option chain of the day.</p>'}</div>`; }).join('')}</div>`;
 }
 function intradayView() {
   const now = ist(), st = signalStats();
@@ -1185,30 +1189,18 @@ function drawIntraday() {
   const tick = css('--muted'), grid = css('--line'), now = ist();
   for (const u of UNDERLYINGS) {
     const it0 = S.intra[u.name], dia = S.diary[`${u.name}-${now.date}`], base = dia && dia.open && dia.open.oi;
-    const cv1 = document.getElementById('ioi-' + u.name);
-    if (cv1 && it0 && it0.shift) {
-      const sh = it0.shift, spot = (S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot;
-      const idx = sh.strikes.reduce((bi, k, i) => Math.abs(k - spot) < Math.abs(sh.strikes[bi] - spot) ? i : bi, 0);
-      const spotLine = { id: 'spotLine', afterDatasetsDraw(chart) { const x = chart.scales.x.getPixelForValue(idx), { top, bottom } = chart.chartArea, cx = chart.ctx; cx.save(); cx.strokeStyle = tick; cx.setLineDash([4, 4]); cx.beginPath(); cx.moveTo(x, top); cx.lineTo(x, bottom); cx.stroke(); cx.restore(); } };
-      S.charts['ioi' + u.name] = new Chart(cv1, { type: 'bar', plugins: [spotLine], data: { labels: sh.strikes.map(fmt), datasets: [
-        { label: 'Calls added / cut', data: sh.ceChg, backgroundColor: css('--ce'), borderRadius: 2, categoryPercentage: .8, barPercentage: .9 },
-        { label: 'Puts added / cut', data: sh.peChg, backgroundColor: css('--pe'), borderRadius: 2, categoryPercentage: .8, barPercentage: .9 }] },
-        options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
-          plugins: { legend: { labels: { color: tick, boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { title: x => 'Strike ' + x[0].label, label: x => `${x.dataset.label.split(' ')[0]}: ${fmtQ(x.parsed.y)}` } } },
-          scales: { x: { grid: { display: false }, ticks: { color: tick, maxRotation: 0, autoSkipPadding: 8 } }, y: { grid: { color: grid }, border: { display: false }, ticks: { color: tick, callback: v => fmtQ(v) } } } } });
-    }
     const cv3 = document.getElementById('iact-' + u.name);
     if (cv3 && it0 && it0.active) {
       const a = it0.active, spot = (S.panels[`${u.name}-${u.kinds[0]}`] || {}).spot;
       const near = a.strikes.reduce((bi, k, i) => Math.abs(k - spot) < Math.abs(a.strikes[bi] - spot) ? i : bi, 0);
       const topC = new Set(a.calls.map(x => x.strike)), topP = new Set(a.puts.map(x => x.strike));
       const spotLine = { id: 'spotLine', afterDatasetsDraw(chart) { const x = chart.scales.x.getPixelForValue(near), { top, bottom } = chart.chartArea, cx = chart.ctx; cx.save(); cx.strokeStyle = tick; cx.setLineDash([4, 4]); cx.beginPath(); cx.moveTo(x, top); cx.lineTo(x, bottom); cx.stroke(); cx.restore(); } };
-      const vq = v => { const z = Math.abs(v); return z >= 1e6 ? (z / 1e6).toFixed(0) + 'M' : z >= 1e3 ? Math.round(z / 1e3) + 'K' : z; };
+      const vq = v => { const z = Math.abs(v), sg = v < 0 ? '−' : ''; return sg + (z >= 1e6 ? (z / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : z >= 1e3 ? Math.round(z / 1e3) + 'K' : z); };
       S.charts['iact' + u.name] = new Chart(cv3, { type: 'bar', plugins: [spotLine], data: { labels: a.strikes.map(fmt), datasets: [
-        { label: 'Calls traded', data: a.ceVol, backgroundColor: a.strikes.map(k => topC.has(k) ? css('--ce') : 'rgba(42,120,214,.3)'), borderRadius: 2, categoryPercentage: .82, barPercentage: .95 },
-        { label: 'Puts traded', data: a.peVol, backgroundColor: a.strikes.map(k => topP.has(k) ? css('--pe') : 'rgba(235,104,52,.3)'), borderRadius: 2, categoryPercentage: .82, barPercentage: .95 }] },
+        { label: a.mode === 'change' ? 'Calls OI change' : 'Calls OI', data: a.mode === 'change' ? a.ceChg : a.ce, backgroundColor: a.strikes.map(k => topC.has(k) ? css('--ce') : 'rgba(42,120,214,.3)'), borderRadius: 2, categoryPercentage: .82, barPercentage: .95 },
+        { label: a.mode === 'change' ? 'Puts OI change' : 'Puts OI', data: a.mode === 'change' ? a.peChg : a.pe, backgroundColor: a.strikes.map(k => topP.has(k) ? css('--pe') : 'rgba(235,104,52,.3)'), borderRadius: 2, categoryPercentage: .82, barPercentage: .95 }] },
         options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
-          plugins: { legend: { display: false }, tooltip: { callbacks: { title: x => 'Strike ' + x[0].label, label: x => `${x.dataset.label}: ${vq(x.parsed.y)}` } } },
+          plugins: { legend: { display: false }, tooltip: { callbacks: { title: x => 'Strike ' + x[0].label, label: x => `${x.dataset.label}: ${a.mode === 'change' ? fmtQ(x.parsed.y) : vq(x.parsed.y)}` } } },
           scales: { x: { grid: { display: false }, ticks: { color: tick, maxRotation: 0, autoSkipPadding: 6, font: { size: 10.5 } } }, y: { grid: { color: grid }, border: { display: false }, ticks: { color: tick, callback: v => vq(v) } } } } });
     }
     const cv2 = document.getElementById('ipcr-' + u.name);
